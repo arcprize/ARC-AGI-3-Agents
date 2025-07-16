@@ -1,14 +1,20 @@
+import json
+import logging
+import struct
 import textwrap
 import uuid
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypedDict
+
+from openai import OpenAI
+from openai.types.chat import ChatCompletionMessage
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
 
+logger = logging.getLogger(__name__)
 
-@dataclass
-class State:
+
+class State(TypedDict):
     frames: list[FrameData]
     latest_frame: FrameData
     messages: list[dict[str, Any]]
@@ -29,13 +35,14 @@ Call exactly one action.
 
 def build():
     import langsmith as ls
-    from langchain.chat_models import init_chat_model
     from langgraph.checkpoint.memory import InMemorySaver
-    from langgraph.functions import entrypoint
+    from langgraph.func import entrypoint
     from langgraph.store.memory import InMemoryStore
+    from langsmith.schemas import Attachment
+    from langsmith.wrappers import wrap_openai
 
     tools = _get_arc_tools()
-    llm = init_chat_model("openai:o4-mini").bind_tools(tools, tool_choice="any")
+    openai_client = wrap_openai(OpenAI())
 
     def format_frame(latest_frame: FrameData) -> str:
         lines = []
@@ -65,20 +72,23 @@ def build():
             )
         )
 
-    @ls.traceable("prompt")
-    def prompt(latest_frame: FrameData, messages: list) -> str:
+    @ls.traceable(run_type="prompt")
+    def prompt(latest_frame: FrameData, messages: list) -> list:
         """Build the user prompt for the LLM. Override this method to customize the prompt."""
+        if (rt := ls.get_current_run_tree()) and latest_frame.frame:
+            rt.attachments["frame"] = Attachment(
+                mime_type="image/bmp",
+                data=_bmp(latest_frame.frame),
+            )
+
         if len(messages) == 0:
-            inbound = [{"role": "user", "content": format_frame(latest_frame)}]
+            inbound = {"role": "user", "content": format_frame(latest_frame)}
         else:
-            inbound = [
-                {
-                    "role": "tool",
-                    "tool_call_id": messages[-1].tool_call_id,
-                    "content": format_frame(latest_frame),
-                },
-                *messages,
-            ]
+            inbound = {
+                "role": "tool",
+                "tool_call_id": messages[-1].tool_call_id,
+                "content": format_frame(latest_frame),
+            }
 
         return [
             {"role": "system", "content": SYS_PROMPT},
@@ -87,24 +97,33 @@ def build():
         ]
 
     @entrypoint(checkpointer=InMemorySaver(), store=InMemoryStore())
-    def agent(state: State) -> GameAction:
-        sys_messages, *convo = prompt(state.latest_frame, state.messages)
-        response = llm.invoke([sys_messages, *convo])
-        return entrypoint.final(value=response, save=[*convo, response])
+    def agent(state: State) -> dict:
+        # TODO: handle the frame bursts
+        sys_messages, *convo = prompt(state["latest_frame"], state.get("messages", []))
+        response = openai_client.chat.completions.create(
+            model="o4-mini",
+            messages=[sys_messages, *convo],
+            tools=tools,
+            tool_choice="required",
+        )
+        ai_msg = response.choices[0].message
+        ai_msg.tool_calls = ai_msg.tool_calls[:1]
+        return entrypoint.final(value=ai_msg, save={"messages": [*convo, ai_msg]})
 
     return agent
 
 
 # Required API
 
-class LangGraphBase(Agent):
+
+class LangGraph(Agent):
     """An agent that always selects actions at random."""
 
     MAX_ACTIONS = 80
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._thread_id = uuid.UUID(self.game_id)
+        self._thread_id = uuid.uuid5(uuid.NAMESPACE_DNS, self.game_id)
         self.agent = build()
 
     @property
@@ -124,10 +143,39 @@ class LangGraphBase(Agent):
     def choose_action(
         self, frames: list[FrameData], latest_frame: FrameData
     ) -> GameAction:
-        return self.agent.invoke(
-            {"frames": frames, "latest_frame": latest_frame},
-            {"configurable": {"thread_id": self._thread_id}},
-        )
+        import langsmith as ls
+
+        with ls.trace("choose_action") as rt:
+            msg: ChatCompletionMessage = self.agent.invoke(
+                {"frames": frames, "latest_frame": latest_frame},
+                {"configurable": {"thread_id": self._thread_id}},
+            )
+            func = msg.tool_calls[0].function
+            action = GameAction.from_name(func.name)
+            try:
+                args = json.loads(func.arguments) if func.arguments else {}
+            except Exception as e:
+                args = {}
+                logger.warning(f"JSON parsing error on LLM function response: {e}")
+            action.set_data(args)
+            rt.end(outputs={"action": action})
+        return action
+
+    def main(self) -> None:
+        import langsmith as ls
+
+        with ls.trace(
+            "LangGraph Agent",
+            input={"state": self.state},
+            metadata={
+                "game_id": self.game_id,
+                "card_id": self.card_id,
+                "agent_name": self.agent_name,
+                "thread_id": self._thread_id,
+            },
+        ) as rt:
+            super().main()
+            rt.end(outputs={"state": self.state})
 
 
 ## Copied from LLMAgent
@@ -212,3 +260,20 @@ def _get_arc_tools() -> list[dict[str, Any]]:
             }
         )
     return tools
+
+
+def _bmp(b):
+    while isinstance(b[0][0], (list, tuple)):
+        b = b[0]
+    h, w = len(b), len(b[0])
+    p = b""
+    for r in b[::-1]:
+        p += b"".join(
+            (v and b"\x00\x00\x00" or b"\xff\xff\xff") for v in r
+        ) + b"\x00" * ((-3 * w) % 4)
+    return (
+        b"BM"
+        + struct.pack("<IHHI", 14 + 40 + len(p), 0, 0, 14 + 40)
+        + struct.pack("<IiiHHIIIIII", 40, w, h, 1, 24, 0, len(p), 0, 0, 0, 0)
+        + p
+    )

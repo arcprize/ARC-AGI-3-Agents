@@ -9,6 +9,7 @@ from .templates.llm_agents import LLM, FastLLM, GuidedLLM, ReasoningLLM
 from .templates.random_agent import Random
 from .templates.reasoning_agent import ReasoningAgent
 from .templates.smolagents import SmolCodingAgent, SmolVisionAgent
+from .templates.langgraph_agent import LangGraph
 
 load_dotenv()
 
@@ -38,5 +39,6 @@ __all__ = [
     "Agent",
     "Recorder",
     "Playback",
+    "LangGraph",
     "AVAILABLE_AGENTS",
 ]
