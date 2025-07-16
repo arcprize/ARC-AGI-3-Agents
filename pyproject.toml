@@ -22,6 +22,10 @@ dev = [
     "requests-mock>=1.12.1",
     "ruff>=0.11.4",
 ]
+[project.optional-dependencies]
+langgraph = [
+    "langgraph>=0.5",
+]
 
 agentops = [
     "agentops>=0.4.18",
