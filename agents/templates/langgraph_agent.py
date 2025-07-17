@@ -3,12 +3,13 @@ import io
 import json
 import logging
 import uuid
-from typing import Any, TypedDict
+from typing import Any, TypedDict, TypeVar, cast
 
 import langsmith as ls
 import PIL
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.func import entrypoint
+from langgraph.pregel import Pregel
 from langsmith.schemas import Attachment
 from langsmith.wrappers import wrap_openai
 from openai import OpenAI
@@ -27,6 +28,8 @@ class State(TypedDict, total=False):
     latest_frame: FrameData
 
 
+MESSAGES = TypeVar("MESSAGES", bound=list[dict[str, Any] | ChatCompletionMessage])
+
 SYS_PROMPT = """# CONTEXT:
 You are an agent playing a dynamic game. Your objective is to
 WIN and avoid GAME_OVER while minimizing actions.
@@ -42,17 +45,15 @@ Call exactly one action.
 
 def build_agent(
     model: str = "o4-mini",
-    tools: list[dict] = [],
+    tools: list[dict[str, Any]] = [],
     reasoning_effort: str | None = None,
     as_image: bool = True,
-):
+) -> Pregel[State, entrypoint.final[ChatCompletionMessage, State]]:
     openai_client = wrap_openai(OpenAI())
     model_kwargs = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
 
-    @ls.traceable(run_type="prompt")
-    def prompt(
-        latest_frame: FrameData, messages: list[dict | ChatCompletionMessage]
-    ) -> list:
+    @ls.traceable(run_type="prompt")  # type: ignore[misc]
+    def prompt(latest_frame: FrameData, messages: MESSAGES) -> MESSAGES:
         """Build the user prompt for the LLM. Override this method to customize the prompt."""
         content = format_frame(latest_frame, as_image)
         if len(messages) == 0:
@@ -63,17 +64,22 @@ def build_agent(
         else:
             inbound = {
                 "role": "tool",
-                "tool_call_id": messages[-1].tool_calls[0].id,
+                "tool_call_id": cast(ChatCompletionMessage, messages[-1])
+                .tool_calls[0]
+                .id,
                 "content": content,
             }
 
-        return [
-            {"role": "system", "content": SYS_PROMPT},
-            *messages,
-            inbound,
-        ]
+        return cast(
+            MESSAGES,
+            [
+                {"role": "system", "content": SYS_PROMPT},
+                *messages,
+                inbound,
+            ],
+        )
 
-    @entrypoint(checkpointer=InMemorySaver())
+    @entrypoint(checkpointer=InMemorySaver())  # type: ignore[misc]
     def agent(
         state: State, *, previous: list[dict[str, Any]] | None = None
     ) -> entrypoint.final[ChatCompletionMessage, State]:
@@ -115,7 +121,7 @@ class LangGraph(LLM, Agent):
             as_image=self.USE_IMAGE,
         )
 
-    @ls.traceable
+    @ls.traceable  # type: ignore[misc]
     def choose_action(
         self, frames: list[FrameData], latest_frame: FrameData
     ) -> GameAction:
@@ -152,7 +158,7 @@ class LangGraphTextOnly(LangGraph, Agent):
     USE_IMAGE = False
 
 
-def format_frame(latest_frame: FrameData, as_image: bool) -> list[dict]:
+def format_frame(latest_frame: FrameData, as_image: bool) -> list[dict[str, Any]]:
     img = g2im(latest_frame.frame) if latest_frame.frame else None
     if as_image and img:
         frame_block = {
@@ -197,7 +203,7 @@ Reply with a few sentences of plain-text strategy observation about the frame to
     ]
 
 
-def g2im(g):
+def g2im(g: list[list[list[int]]]) -> bytes:
     C = [
         (0, 0, 0),
         (0, 0, 170),

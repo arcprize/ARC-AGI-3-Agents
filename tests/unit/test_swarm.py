@@ -159,81 +159,81 @@ class TestSwarmCleanup:
 
 
 @pytest.mark.unit
-class TestSwarmTags:   
+class TestSwarmTags:
     @patch("agents.swarm.requests.Session.post")
     def test_open_scorecard_with_custom_tags(self, mock_post):
         """Test that custom tags are sent when opening a scorecard"""
         mock_response = Mock()
         mock_response.json.return_value = {"card_id": "test-card-123"}
         mock_post.return_value = mock_response
-        
+
         custom_tags = ["experiment1", "version2", "test"]
         default_tags = ["agent", "random"]
         combined_tags = default_tags + custom_tags
-        
+
         swarm = Swarm(
-            agent="random", 
-            ROOT_URL="https://example.com", 
+            agent="random",
+            ROOT_URL="https://example.com",
             games=["game1"],
-            tags=combined_tags
+            tags=combined_tags,
         )
-        
+
         card_id = swarm.open_scorecard()
         assert card_id == "test-card-123"
-        
+
         mock_post.assert_called_once()
         call_args = mock_post.call_args
         json_data = call_args[1]["json"]
-        
+
         assert json_data["tags"] == combined_tags
-    
+
     @patch("agents.swarm.requests.Session.post")
     def test_open_scorecard_with_empty_tags(self, mock_post):
         """Test that default tags are sent when no custom tags are provided"""
         mock_response = Mock()
         mock_response.json.return_value = {"card_id": "test-card-123"}
         mock_post.return_value = mock_response
-        
+
         default_tags = ["agent", "random"]
-        
+
         swarm = Swarm(
-            agent="random", 
-            ROOT_URL="https://example.com", 
+            agent="random",
+            ROOT_URL="https://example.com",
             games=["game1"],
-            tags=default_tags
+            tags=default_tags,
         )
-        
+
         card_id = swarm.open_scorecard()
         assert card_id == "test-card-123"
-        
+
         mock_post.assert_called_once()
         call_args = mock_post.call_args
         json_data = call_args[1]["json"]
-        
+
         assert json_data["tags"] == default_tags
         assert json_data["tags"] == ["agent", "random"]
-    
+
     @patch("agents.swarm.requests.Session.post")
     def test_open_scorecard_with_default_and_custom_tags(self, mock_post):
         """Test that tags include both defaults and custom tags when set from main.py"""
         mock_response = Mock()
         mock_response.json.return_value = {"card_id": "test-card-123"}
         mock_post.return_value = mock_response
-        
+
         default_tags = ["agent", "random"]
         custom_tags = ["experiment1", "version2"]
         combined_tags = default_tags + custom_tags
-        
+
         swarm = Swarm(
-            agent="random", 
-            ROOT_URL="https://example.com", 
+            agent="random",
+            ROOT_URL="https://example.com",
             games=["game1"],
-            tags=combined_tags
+            tags=combined_tags,
         )
-        
+
         card_id = swarm.open_scorecard()
         assert card_id == "test-card-123"
-        
+
         mock_post.assert_called_once()
         call_args = mock_post.call_args
         json_data = call_args[1]["json"]
