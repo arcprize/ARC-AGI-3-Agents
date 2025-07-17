@@ -11,7 +11,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.func import entrypoint
 from langgraph.pregel import Pregel
 from langsmith.schemas import Attachment
-from langsmith.wrappers import wrap_openai
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessage
 
@@ -49,7 +48,7 @@ def build_agent(
     reasoning_effort: str | None = None,
     as_image: bool = True,
 ) -> Pregel[State, entrypoint.final[ChatCompletionMessage, State]]:
-    openai_client = wrap_openai(OpenAI())
+    openai_client = OpenAI()
     model_kwargs = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
 
     @ls.traceable(run_type="prompt")  # type: ignore[misc]
@@ -79,6 +78,22 @@ def build_agent(
             ],
         )
 
+    @ls.traceable  # type: ignore[misc]
+    def llm(
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        tool_choice: str = "required",
+        **kwargs: Any,
+    ) -> ChatCompletionMessage:
+        return openai_client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            **kwargs,
+        )
+
     @entrypoint(checkpointer=InMemorySaver())  # type: ignore[misc]
     def agent(
         state: State, *, previous: list[dict[str, Any]] | None = None
@@ -86,7 +101,7 @@ def build_agent(
         # TODO: handle the frame bursts; explore + learn
         # kinda funny bcs this is really just an llm call rn :)
         sys_messages, *convo = prompt(state["latest_frame"], previous or [])
-        response = openai_client.chat.completions.create(
+        response = llm(
             model=model,
             messages=[sys_messages, *convo],
             tools=tools,
