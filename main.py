@@ -25,7 +25,12 @@ logger = logging.getLogger()
 SCHEME = os.environ.get("SCHEME", "http")
 HOST = os.environ.get("HOST", "localhost")
 PORT = os.environ.get("PORT", 8001)
-ROOT_URL = f"{SCHEME}://{HOST}:{PORT}"
+
+# Hide standard ports in URL
+if (SCHEME == "http" and str(PORT) == "80") or (SCHEME == "https" and str(PORT) == "443"):
+    ROOT_URL = f"{SCHEME}://{HOST}"
+else:
+    ROOT_URL = f"{SCHEME}://{HOST}:{PORT}"
 HEADERS = {
     "X-API-Key": os.getenv("ARC_API_KEY", ""),
     "Accept": "application/json",
