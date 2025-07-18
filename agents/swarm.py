@@ -120,9 +120,23 @@ class Swarm:
             json=json.loads(json_str),
             headers=self.headers,
         )
-        if "error" in r.json():
-            logger.warning(f"Exception during open scorecard: {r.json()}")
-        return str(r.json()["card_id"])
+        
+        # Check if request was successful
+        if not r.ok:
+            logger.error(f"Failed to open scorecard: {r.status_code} - {r.text}")
+            raise Exception(f"Failed to open scorecard: {r.status_code}")
+            
+        response_data = r.json()
+        logger.info(f"Response data: {response_data}")
+        if "error" in response_data:
+            logger.error(f"API error during open scorecard: {response_data}")
+            raise Exception(f"API error: {response_data['error']}")
+            
+        if "card_id" not in response_data:
+            logger.error(f"Missing card_id in response: {response_data}")
+            raise Exception("Missing card_id in response")
+            
+        return str(response_data["card_id"])
 
     def close_scorecard(self, card_id: str) -> Scorecard:
         self.card_id = None
@@ -132,9 +146,18 @@ class Swarm:
             json=json.loads(json_str),
             headers=self.headers,
         )
-        if "error" in r.json():
-            logger.warning(f"Exception during open scorecard: {r.json()}")
-        return Scorecard.model_validate(r.json())
+        
+        # Check if request was successful
+        if not r.ok:
+            logger.error(f"Failed to close scorecard: {r.status_code} - {r.text}")
+            raise Exception(f"Failed to close scorecard: {r.status_code}")
+            
+        response_data = r.json()
+        if "error" in response_data:
+            logger.error(f"API error during close scorecard: {response_data}")
+            raise Exception(f"API error: {response_data['error']}")
+            
+        return Scorecard.model_validate(response_data)
 
     def cleanup(self, scorecard: Optional[Scorecard] = None) -> None:
         """Cleanup all agents."""
