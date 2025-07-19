@@ -405,7 +405,7 @@ class ReasoningLLM(LLM, Agent):
     MAX_ACTIONS = 80
     DO_OBSERVATION = True
     MODEL_REQUIRES_TOOLS = True
-    MODEL = "o4-mini"
+    MODEL = os.environ.get("LLM_MODEL_NAME", "o4-mini")
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
