@@ -36,7 +36,8 @@ class LLM(Agent):
     @property
     def name(self) -> str:
         obs = "with-observe" if self.DO_OBSERVATION else "no-observe"
-        name = f"{super().name}.{self.MODEL}.{obs}"
+        sanitized_model_name = self.MODEL.replace('/', '-').replace(':', '-')
+        name = f"{super().name}.{sanitized_model_name}.{obs}"
         if self.REASONING_EFFORT:
             name += f".{self.REASONING_EFFORT}"
         return name
