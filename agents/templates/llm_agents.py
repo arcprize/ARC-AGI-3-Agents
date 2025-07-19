@@ -19,7 +19,7 @@ class LLM(Agent):
     MAX_ACTIONS: int = 80
     DO_OBSERVATION: bool = True
     REASONING_EFFORT: Optional[str] = None
-    MODEL_REQUIRES_TOOLS: bool = False
+    MODEL_REQUIRES_TOOLS: bool = True
 
     MESSAGE_LIMIT: int = 10
     MODEL: str = "gpt-4o-mini"
