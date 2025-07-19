@@ -179,7 +179,16 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, partial(cleanup, swarm))  # handler for Ctrl+C
 
-    agent_thread.join()
+    try:
+        # Wait for the agent thread to complete
+        while agent_thread.is_alive():
+            agent_thread.join(timeout=5)  # Check every 5 second
+    except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt received in main thread")
+        cleanup(swarm, signal.SIGINT, None)
+    except Exception as e:
+        logger.error(f"Unexpected error in main thread: {e}")
+        cleanup(swarm, None, None)
 
 
 if __name__ == "__main__":
