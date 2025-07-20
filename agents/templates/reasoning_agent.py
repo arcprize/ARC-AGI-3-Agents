@@ -82,17 +82,22 @@ class ReasoningAgent(ReasoningLLM):
 
         # Color mapping for grid cells
         key_colors = {
-            10: "#000000",  # wall: black
-            11: "#FF00FF",  # door border: pink
-            7: "#FFFFFF",  # key or lock: white
-            9: "#996633",  # brown (part of the key rotator)
-            2: "#00FF00",  # green
-            3: "#0000FF",  # blue
-            0: "#FFFF00",  # player upper body: yellow
-            4: "#0000FF",  # player bottom body: blue
-            5: "#FFA500",  # orange
-            6: "#800080",  # purple
-            8: "#888888",  # gray (floor)
+            0: "#FFFFFF",
+            1: "#CCCCCC",
+            2: "#999999",
+            3: "#666666",
+            4: "#333333",
+            5: "#000000",
+            6: "#E53AA3",
+            7: "#FF7BCC",
+            8: "#F93C31",
+            9: "#1E93FF",
+            10: "#88D8F1",
+            11: "#FFDC00",
+            12: "#FF851B",
+            13: "#921231",
+            14: "#4FCC30",
+            15: "#A356D6"
         }
 
         # Draw grid cells
