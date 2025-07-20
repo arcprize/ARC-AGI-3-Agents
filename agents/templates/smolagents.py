@@ -1,4 +1,5 @@
 import logging
+import os
 import textwrap
 import time
 from typing import Any
@@ -28,7 +29,7 @@ class SmolCodingAgent(LLM, Agent):
     DO_OBSERVATION: bool = True
 
     MESSAGE_LIMIT: int = 10
-    MODEL: str = "o4-mini"
+    MODEL: str = os.environ.get("LLM_MODEL_NAME", "o4-mini")
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -36,7 +37,7 @@ class SmolCodingAgent(LLM, Agent):
     def main(self) -> None:
         """The main function to initialize the agent and play the game until finished."""
         self.timer = time.time()
-        model = OpenAIServerModel(self.MODEL)
+        model = OpenAIServerModel(self.MODEL, api_key=os.environ.get("LLM_API_KEY", ""), api_base=os.environ.get("LLM_BASE_URL", ""))
 
         # A CodeAgent calls and manipulates tools as Python functions which enables complex reasoning, algorithms etc.
         # Think BFS, DFS, A*, etc.
@@ -256,7 +257,7 @@ class SmolVisionAgent(LLM, Agent):
     def main(self) -> None:
         """The main agent loop. Play the game_id until finished, then exits."""
         self.timer = time.time()
-        model = OpenAIServerModel(self.MODEL)
+        model = OpenAIServerModel(self.MODEL, api_key=os.environ.get("LLM_API_KEY", ""), api_base=os.environ.get("LLM_BASE_URL", ""))
 
         agent = ToolCallingAgent(
             model=model,
