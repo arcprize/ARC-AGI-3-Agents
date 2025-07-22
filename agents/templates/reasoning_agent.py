@@ -63,7 +63,7 @@ class ReasoningAgent(ReasoningLLM):
         self.screen_history = []
 
     def generate_grid_image_with_zone(
-        self, grid: List[List[int]], cell_size: int = 40, zone_size: int = 20
+        self, grid: List[List[int]], cell_size: int = 40, zone_size: int = 16
     ) -> bytes:
         """Generate PIL image of the grid with colored cells and zone coordinates."""
         if not grid or not grid[0]:
