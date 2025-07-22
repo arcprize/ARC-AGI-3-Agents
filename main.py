@@ -1,10 +1,6 @@
 # ruff: noqa: E402
-from dotenv import load_dotenv
-
-load_dotenv(dotenv_path=".env-example")
-load_dotenv(dotenv_path=".env", override=True)
-
 import argparse
+import io
 import json
 import logging
 import os
@@ -16,9 +12,13 @@ from types import FrameType
 from typing import Optional
 
 import requests
+from dotenv import load_dotenv
 
 from agents import AVAILABLE_AGENTS, Swarm
 from agents.tracing import initialize as init_agentops
+
+load_dotenv(dotenv_path=".env-example")
+load_dotenv(dotenv_path=".env", override=True)
 
 logger = logging.getLogger()
 
@@ -62,11 +62,26 @@ def main() -> None:
     logger.setLevel(log_level)
     formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
 
-    stdout_handler = logging.StreamHandler(sys.stdout)
+    # Fix for Windows Unicode encoding issues
+    if sys.platform == "win32":
+        # Set stdout to use UTF-8 encoding
+        if sys.stdout.encoding != "utf-8":
+            sys.stdout = io.TextIOWrapper(
+                sys.stdout.buffer,
+                encoding="utf-8",
+                errors="replace",
+                newline="",
+                line_buffering=True,
+            )
+        stdout_handler = logging.StreamHandler(sys.stdout)
+    else:
+        stdout_handler = logging.StreamHandler(sys.stdout)
+
     stdout_handler.setLevel(log_level)
     stdout_handler.setFormatter(formatter)
 
-    file_handler = logging.FileHandler("logs.log", mode="w")
+    # Also configure file handler with UTF-8 encoding
+    file_handler = logging.FileHandler("logs.log", mode="w", encoding="utf-8")
     file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
 

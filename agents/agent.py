@@ -61,6 +61,7 @@ class Agent(ABC):
         self.headers = {
             "X-API-Key": os.getenv("ARC_API_KEY", ""),
             "Accept": "application/json",
+            "Content-Type": "application/json; charset=utf-8",  # Explicit UTF-8 for Windows
         }
         # Reuse session
         self._session = requests.Session()
@@ -137,10 +138,9 @@ class Agent(ABC):
         if self.game_id:
             data["game_id"] = self.game_id
 
-        json_str = json.dumps(data)
         r = self._session.post(
             f"{self.ROOT_URL}/api/cmd/{action.name}",
-            json=json.loads(json_str),
+            json=data,  # Let requests handle serialization with proper UTF-8
             headers=self.headers,
         )
         if "error" in r.json():

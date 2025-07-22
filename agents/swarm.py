@@ -51,6 +51,7 @@ class Swarm:
         self.headers = {
             "X-API-Key": os.getenv("ARC_API_KEY", ""),
             "Accept": "application/json",
+            "Content-Type": "application/json; charset=utf-8",  # Explicit UTF-8 for Windows
         }
         self._session = requests.Session()
         self._session.headers.update(self.headers)
@@ -113,11 +114,9 @@ class Swarm:
         return scorecard
 
     def open_scorecard(self) -> str:
-        json_str = json.dumps({"tags": self.tags})
-
         r = self._session.post(
             f"{self.ROOT_URL}/api/scorecard/open",
-            json=json.loads(json_str),
+            json={"tags": self.tags},
             headers=self.headers,
         )
         if "error" in r.json():
@@ -126,10 +125,9 @@ class Swarm:
 
     def close_scorecard(self, card_id: str) -> Scorecard:
         self.card_id = None
-        json_str = json.dumps({"card_id": card_id})
         r = self._session.post(
             f"{self.ROOT_URL}/api/scorecard/close",
-            json=json.loads(json_str),
+            json={"card_id": card_id},
             headers=self.headers,
         )
         if "error" in r.json():
