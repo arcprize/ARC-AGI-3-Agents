@@ -121,24 +121,17 @@ class Swarm:
             headers=self.headers,
         )
         
-        # Check if request was successful
-        if not r.ok:
-            logger.error(f"Failed to open scorecard: {r.status_code} - {r.text}")
-            raise Exception(f"Failed to open scorecard: {r.status_code}")
-            
-        response_data = r.json()
-        logger.info(f"Response data: {response_data}")
-        if "error" in response_data:
-            logger.error(f"API error during open scorecard: {response_data}")
-            raise Exception(f"API error: {response_data['error']}")
-            
-        if "card_id" not in response_data:
-            logger.error(f"Missing card_id in response: {response_data}")
-            raise Exception("Missing card_id in response")
-            
-        return str(response_data["card_id"])
+        try:
+            response_data = r.json()
+        except ValueError:
+            raise Exception(f"Failed to open scorecard: {r.status_code} - {r.text}")
 
-    def close_scorecard(self, card_id: str) -> Scorecard:
+        if not r.ok:
+            raise Exception(f"API error during open scorecard: {r.status_code} - {response_data}")
+
+        return response_data["card_id"]
+
+    def close_scorecard(self, card_id: str) -> Optional[Scorecard]:
         self.card_id = None
         json_str = json.dumps({"card_id": card_id})
         r = self._session.post(
@@ -147,15 +140,15 @@ class Swarm:
             headers=self.headers,
         )
         
-        # Check if request was successful
-        if not r.ok:
+        try:
+            response_data = r.json()
+        except ValueError:
             logger.error(f"Failed to close scorecard: {r.status_code} - {r.text}")
-            raise Exception(f"Failed to close scorecard: {r.status_code}")
-            
-        response_data = r.json()
-        if "error" in response_data:
-            logger.error(f"API error during close scorecard: {response_data}")
-            raise Exception(f"API error: {response_data['error']}")
+            return None
+
+        if not r.ok:
+            logger.error(f"API error during close scorecard: {r.status_code} - {response_data}")
+            return None
             
         return Scorecard.model_validate(response_data)
 
