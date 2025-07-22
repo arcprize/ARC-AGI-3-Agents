@@ -143,11 +143,11 @@ class Swarm:
         try:
             response_data = r.json()
         except ValueError:
-            logger.error(f"Failed to close scorecard: {r.status_code} - {r.text}")
+            logger.warning(f"Failed to close scorecard: {r.status_code} - {r.text}")
             return None
 
         if not r.ok:
-            logger.error(f"API error during close scorecard: {r.status_code} - {response_data}")
+            logger.warning(f"API error during close scorecard: {r.status_code} - {response_data}")
             return None
             
         return Scorecard.model_validate(response_data)
