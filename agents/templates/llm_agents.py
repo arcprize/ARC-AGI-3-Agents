@@ -273,22 +273,22 @@ class LLM(Agent):
             },
             {
                 "name": GameAction.ACTION1.name,
-                "description": "Send this simple input action (1, A, Left).",
+                "description": "Send this simple input action (1, W, Up).",
                 "parameters": empty_params,
             },
             {
                 "name": GameAction.ACTION2.name,
-                "description": "Send this simple input action (2, D, Right).",
+                "description": "Send this simple input action (2, S, Down).",
                 "parameters": empty_params,
             },
             {
                 "name": GameAction.ACTION3.name,
-                "description": "Send this simple input action (3, W, Up).",
+                "description": "Send this simple input action (3, A, Left).",
                 "parameters": empty_params,
             },
             {
                 "name": GameAction.ACTION4.name,
-                "description": "Send this simple input action (4, S, Down).",
+                "description": "Send this simple input action (4, D, Right).",
                 "parameters": empty_params,
             },
             {
@@ -577,7 +577,7 @@ Grids. Each Grid is a matrix size INT<0,63> by INT<0,63> filled with
 INT<0,15> values.
 
 You are playing a game called LockSmith. Rules and strategy:
-* RESET: start over, ACTION1: move left, ACTION2: move right, ACTION3: move up, ACTION4: move down (ACTION5 and ACTION6 do nothing in this game)
+* RESET: start over, ACTION1: move up, ACTION2: move down, ACTION3: move left, ACTION4: move right (ACTION5 and ACTION6 do nothing in this game)
 * you may may one action per turn
 * your goal is find and collect a matching key then touch the exit door
 * 6 levels total, score shows which level, complete all levels to win (grid row 62)
