@@ -43,13 +43,18 @@ def cleanup(
     frame: Optional[FrameType],
 ) -> None:
     logger.info("Received SIGINT, exiting...")
-
-    if swarm.card_id:
-        scorecard = swarm.close_scorecard(swarm.card_id)
+    card_id = swarm.card_id
+    if card_id:
+        scorecard = swarm.close_scorecard(card_id)
         if scorecard:
-            logger.info("--- EXITING SCORECARD REPORT ---")
+            logger.info("--- EXISTING SCORECARD REPORT ---")
             logger.info(json.dumps(scorecard.model_dump(), indent=2))
             swarm.cleanup(scorecard)
+        
+        # Provide web link to scorecard
+        if card_id:
+            scorecard_url = f"{ROOT_URL}/scorecards/{card_id}"
+            logger.info(f"View your scorecard online: {scorecard_url}")
 
     sys.exit(0)
 
