@@ -22,7 +22,7 @@ class LLM(Agent):
     MODEL_REQUIRES_TOOLS: bool = False
 
     MESSAGE_LIMIT: int = 10
-    MODEL: str = os.environ.get("LLM_MODEL_NAME",  "gpt-4o-mini")
+    MODEL: str = os.environ.get("LLM_MODEL",  "gpt-4o-mini")
     messages: list[dict[str, Any]]
     token_counter: int
 
@@ -405,7 +405,7 @@ class ReasoningLLM(LLM, Agent):
     MAX_ACTIONS = 80
     DO_OBSERVATION = True
     MODEL_REQUIRES_TOOLS = True
-    MODEL = os.environ.get("LLM_MODEL_NAME", "o4-mini")
+    MODEL = os.environ.get("LLM_MODEL", "o4-mini")
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -473,7 +473,7 @@ class FastLLM(LLM, Agent):
 
     MAX_ACTIONS = 80
     DO_OBSERVATION = False
-    MODEL = os.environ.get("LLM_MODEL_NAME",  "gpt-4o-mini")
+    MODEL = os.environ.get("LLM_MODEL",  "gpt-4o-mini")
 
     def build_user_prompt(self, latest_frame: FrameData) -> str:
         return textwrap.dedent(
@@ -610,7 +610,7 @@ class MyCustomLLM(LLM):
     """Template for creating your own custom LLM agent."""
 
     MAX_ACTIONS = 80
-    MODEL = os.environ.get("LLM_MODEL_NAME",  "gpt-4o-mini")
+    MODEL = os.environ.get("LLM_MODEL",  "gpt-4o-mini")
     DO_OBSERVATION = True
 
     def build_user_prompt(self, latest_frame: FrameData) -> str:

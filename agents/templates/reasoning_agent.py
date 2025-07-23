@@ -47,7 +47,7 @@ class ReasoningAgent(ReasoningLLM):
 
     MAX_ACTIONS = 400
     DO_OBSERVATION = True
-    MODEL = os.environ.get("LLM_MODEL_NAME", "o4-mini")
+    MODEL = os.environ.get("LLM_MODEL", "o4-mini")
     MESSAGE_LIMIT = 5
     REASONING_EFFORT = "high"
 

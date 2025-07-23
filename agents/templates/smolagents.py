@@ -29,7 +29,7 @@ class SmolCodingAgent(LLM, Agent):
     DO_OBSERVATION: bool = True
 
     MESSAGE_LIMIT: int = 10
-    MODEL: str = os.environ.get("LLM_MODEL_NAME", "o4-mini")
+    MODEL: str = os.environ.get("LLM_MODEL", "o4-mini")
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
