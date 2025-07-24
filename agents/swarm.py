@@ -101,8 +101,9 @@ class Swarm:
         # all agents are now done
         card_id_for_url = self.card_id
         scorecard = self.close_scorecard(self.card_id)
-        logger.info("--- FINAL SCORECARD REPORT ---")
-        logger.info(json.dumps(scorecard.model_dump(), indent=2))
+        if scorecard:
+            logger.info("--- FINAL SCORECARD REPORT ---")
+            logger.info(json.dumps(scorecard.model_dump(), indent=2))
 
         # Provide web link to scorecard
         if card_id_for_url:
@@ -121,11 +122,18 @@ class Swarm:
             json=json.loads(json_str),
             headers=self.headers,
         )
-        if "error" in r.json():
-            logger.warning(f"Exception during open scorecard: {r.json()}")
-        return str(r.json()["card_id"])
+        
+        try:
+            response_data = r.json()
+        except ValueError:
+            raise Exception(f"Failed to open scorecard: {r.status_code} - {r.text}")
 
-    def close_scorecard(self, card_id: str) -> Scorecard:
+        if not r.ok:
+            raise Exception(f"API error during open scorecard: {r.status_code} - {response_data}")
+
+        return response_data["card_id"]
+
+    def close_scorecard(self, card_id: str) -> Optional[Scorecard]:
         self.card_id = None
         json_str = json.dumps({"card_id": card_id})
         r = self._session.post(
@@ -133,9 +141,18 @@ class Swarm:
             json=json.loads(json_str),
             headers=self.headers,
         )
-        if "error" in r.json():
-            logger.warning(f"Exception during open scorecard: {r.json()}")
-        return Scorecard.model_validate(r.json())
+        
+        try:
+            response_data = r.json()
+        except ValueError:
+            logger.warning(f"Failed to close scorecard: {r.status_code} - {r.text}")
+            return None
+
+        if not r.ok:
+            logger.warning(f"API error during close scorecard: {r.status_code} - {response_data}")
+            return None
+            
+        return Scorecard.model_validate(response_data)
 
     def cleanup(self, scorecard: Optional[Scorecard] = None) -> None:
         """Cleanup all agents."""
