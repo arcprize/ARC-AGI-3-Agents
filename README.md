@@ -31,6 +31,16 @@ uv run main.py --agent=random --game=ls20
 
 For more information, see the [documentation](https://three.arcprize.org/docs#quick-start) or the [tutorial video](https://youtu.be/xEVg9dcJMkw).
 
+## Visualization
+
+Visualize your agent's gameplay recordings:
+
+```bash
+uv run visualize.py recordings/your-recording-file.jsonl
+```
+
+This creates plots, animations, and analysis reports in the `visualization_output/` folder.
+
 ## Observability (Optional)
 
 [AgentOps](https://agentops.ai/) is an observability platform designed for providing real-time monitoring, debugging, and analytics for your agent's behavior, helping you understand how your agents perform and make decisions.
