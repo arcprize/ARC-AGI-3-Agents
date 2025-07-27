@@ -98,7 +98,7 @@ class ReasoningAgent(ReasoningLLM):
             12: "#FF851B",
             13: "#921231",
             14: "#4FCC30",
-            15: "#A356D6"
+            15: "#A356D6",
         }
 
         # Draw grid cells
