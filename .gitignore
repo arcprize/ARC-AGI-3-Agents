@@ -9,6 +9,9 @@
 .mypy_cache/
 **/__pycache__/
 
+# IDE settings
+.vscode/
+
 # Recordings
 recordings/*.recording.jsonl
 tests/recordings/*.recording.jsonl
