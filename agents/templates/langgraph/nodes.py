@@ -4,11 +4,11 @@ This file contains various nodes you can add to a LangGraph workflow for solving
 
 import random
 
-from langgraph.config import get_store
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-from ...structs import GameAction, GameState
+from langgraph.config import get_store
 
+from ...structs import GameAction, GameState
 from .llm import get_llm
 from .prompts import (
     build_frame_delta_prompt,
@@ -19,11 +19,8 @@ from .prompts import (
     build_text_message_part,
 )
 from .schema import AgentState, KeyCheck, Observation
+from .tools import all_tools
 from .vision import render_frame
-
-from .tools import act, delete_observation, observe, think
-
-all_tools = [act, delete_observation, observe, think]
 
 
 def act(state: AgentState) -> AgentState:
@@ -152,7 +149,7 @@ def act_randomly(state: AgentState) -> AgentState:
                 "my_reason": "RNG said so!",
             }
 
-    return {"action": action}
+    return {**state, "action": action}
 
 
 def analyze_frame_delta(state: AgentState) -> AgentState:
@@ -178,12 +175,12 @@ def analyze_frame_delta(state: AgentState) -> AgentState:
             for k in range(len(latest_frame.frame[i][j])):
                 if latest_frame.frame[i][j][k] != previous_frame.frame[i][j][k]:
                     if j == 1:
-                        state_changes.append(f"Change in heath indicator")
+                        state_changes.append("Change in heath indicator")
                     elif j == 2 and k < 54:
                         if latest_frame.frame[i][j][k] == 8:
-                            state_changes.append(f"1 energy unit used")
+                            state_changes.append("1 energy unit used")
                         elif latest_frame.frame[i][j][k] == 6:
-                            state_changes.append(f"1 energy unit added")
+                            state_changes.append("1 energy unit added")
                     else:
                         movements.append(
                             f"<{j},{k}>: {previous_frame.frame[i][j][k]} -> {latest_frame.frame[i][j][k]}"

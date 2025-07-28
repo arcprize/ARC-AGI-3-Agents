@@ -2,11 +2,12 @@
 Helpers for working with game frames.
 """
 
-import json
 import base64
+import json
+from io import BytesIO
+
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from io import BytesIO
 
 COLOR_PALETTE = {
     0: (0, 0, 0),  # Black
@@ -223,7 +224,7 @@ def add_highlight(
     draw: ImageDraw.ImageDraw,
     coords: ImageDraw.Coords,
     label: str,
-):
+) -> None:
     (x1, y1), (x2, y2) = coords
 
     draw.rectangle(

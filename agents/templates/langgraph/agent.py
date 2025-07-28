@@ -1,6 +1,5 @@
 import sqlite3
-from typing import Any
-
+from typing import Any, cast
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -8,10 +7,8 @@ from langgraph.store.sqlite import SqliteStore
 
 from ...agent import Agent
 from ...structs import FrameData, GameAction, GameState
-
-from .schema import LLM, AgentState
-
 from .nodes import act, analyze_frame_delta, check_key, init
+from .schema import LLM, AgentState
 
 
 class LangGraph(Agent):
@@ -28,10 +25,11 @@ class LangGraph(Agent):
         self.agent_state = {
             "action": None,
             "context": [],
+            "key_matches_door": False,
             "llm": kwargs.get("llm", LLM.OPENAI_GPT_41),
             "thoughts": [],
             "frames": [],
-            "latest_frame": None,
+            "latest_frame": None,  # type: ignore[typeddict-item]
             "previous_frame": None,
         }
         self.workflow = self._build_workflow()
@@ -109,4 +107,4 @@ class LangGraph(Agent):
         self.agent_state = output
 
         # Return the selected action
-        return output["action"]
+        return cast(GameAction, output["action"])

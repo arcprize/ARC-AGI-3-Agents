@@ -21,7 +21,6 @@ class AgentState(TypedDict):
     key_matches_door: bool
 
     frames: list[FrameData]
-    rendered_frames: list[str | None]
     latest_frame: FrameData
     previous_frame: Optional[FrameData]
     llm: LLM

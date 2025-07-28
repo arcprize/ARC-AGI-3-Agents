@@ -6,15 +6,17 @@ from textwrap import dedent
 
 from .schema import Observation
 
+Part = dict[str, str | dict[str, str]]
 
-def build_image_message_part(image_b64: str) -> dict:
+
+def build_image_message_part(image_b64: str) -> Part:
     return {
         "type": "image_url",
         "image_url": {"url": f"data:image/png;base64,{image_b64}"},
     }
 
 
-def build_text_message_part(text: str) -> dict:
+def build_text_message_part(text: str) -> Part:
     return {
         "type": "text",
         "text": text,
@@ -116,9 +118,9 @@ def build_game_frame_explanation_prompt() -> str:
     )
 
 
-def build_key_checker_prompt():
+def build_key_checker_prompt() -> str:
     return dedent(
-        f"""
+        """
         You are analyzing a frame from a pixel-art style game.
         Your task is to determine if the player's key currently matches the target pattern in the exit door.
 

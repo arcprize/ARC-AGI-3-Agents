@@ -1,9 +1,10 @@
 import logging
-from typing import Literal, TypedDict
 import uuid
+from typing import Literal, TypedDict, cast
+
+from langchain_core.tools import tool
 
 from langgraph.config import get_store
-from langchain_core.tools import tool
 
 from ...structs import GameAction
 
@@ -20,13 +21,14 @@ class GameActionComplex(TypedDict):
     y: int
 
 
-@tool
+@tool  # type: ignore[misc]
 def act(action: GameActionSimple | GameActionComplex) -> GameAction:
     """Perform an action in the game."""
 
     log.info(f"👉 {action}")
 
     if "x" in action:
+        action = cast(GameActionComplex, action)
         act = GameAction.from_name(action["type"])
         act.set_data({"x": action["x"], "y": action["y"]})
         return act
@@ -35,7 +37,7 @@ def act(action: GameActionSimple | GameActionComplex) -> GameAction:
         return act
 
 
-@tool
+@tool  # type: ignore[misc]
 def think(thought: str) -> str:
     """
     Think about your next action or what is happening in the environment.
@@ -46,7 +48,7 @@ def think(thought: str) -> str:
     return f"Thought: {thought}"
 
 
-@tool
+@tool  # type: ignore[misc]
 def delete_observation(id: str) -> str:
     """Delete an observation from your journal. Useful if you think it no longer applies."""
 
@@ -55,7 +57,7 @@ def delete_observation(id: str) -> str:
     return f"Observation deleted with ID: {id}"
 
 
-@tool
+@tool  # type: ignore[misc]
 def observe(observation: str) -> str:
     """
     Stores an observation about the game in your journal.
@@ -76,3 +78,6 @@ def observe(observation: str) -> str:
     )
 
     return f"Observation stored with ID: {id}"
+
+
+all_tools = [act, delete_observation, observe, think]
