@@ -9,6 +9,7 @@ from .templates.llm_agents import LLM, FastLLM, GuidedLLM, ReasoningLLM
 from .templates.random_agent import Random
 from .templates.reasoning_agent import ReasoningAgent
 from .templates.smolagents import SmolCodingAgent, SmolVisionAgent
+from .templates.langgraph import LangGraph
 
 load_dotenv()
 
@@ -28,6 +29,7 @@ AVAILABLE_AGENTS["reasoningagent"] = ReasoningAgent
 __all__ = [
     "Swarm",
     "Random",
+    "LangGraph",
     "LLM",
     "FastLLM",
     "ReasoningLLM",
