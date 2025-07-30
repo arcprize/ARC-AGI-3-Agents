@@ -237,7 +237,7 @@ How to proceed:
 Hint:
 - The game is a 2D platformer.
 - The player can move up, down, left and right.
-- The player has a blue body and a yellow head.
+- The player has a blue body and an orange head.
 - There are walls in black.
 - The door has a pink border and a shape inside.
         """
