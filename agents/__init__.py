@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from .agent import Agent, Playback
 from .recorder import Recorder
 from .swarm import Swarm
+from .templates.langgraph import LangGraph
 from .templates.llm_agents import LLM, FastLLM, GuidedLLM, ReasoningLLM
 from .templates.random_agent import Random
 from .templates.reasoning_agent import ReasoningAgent
@@ -28,6 +29,7 @@ AVAILABLE_AGENTS["reasoningagent"] = ReasoningAgent
 __all__ = [
     "Swarm",
     "Random",
+    "LangGraph",
     "LLM",
     "FastLLM",
     "ReasoningLLM",

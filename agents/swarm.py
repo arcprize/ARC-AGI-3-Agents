@@ -122,9 +122,16 @@ class Swarm:
             json=json.loads(json_str),
             headers=self.headers,
         )
-        if "error" in r.json():
-            logger.warning(f"Exception during open scorecard: {r.json()}")
-        return str(r.json()["card_id"])
+        
+        try:
+            response_data = r.json()
+        except ValueError:
+            raise Exception(f"Failed to open scorecard: {r.status_code} - {r.text}")
+
+        if not r.ok:
+            raise Exception(f"API error during open scorecard: {r.status_code} - {response_data}")
+
+        return response_data["card_id"]
 
     def close_scorecard(self, card_id: str) -> Optional[Scorecard]:
         self.card_id = None
@@ -134,10 +141,18 @@ class Swarm:
             json=json.loads(json_str),
             headers=self.headers,
         )
-        if "error" in r.json():
-            logger.warning(f"Exception during closing scorecard: {r.json()}")
+        
+        try:
+            response_data = r.json()
+        except ValueError:
+            logger.warning(f"Failed to close scorecard: {r.status_code} - {r.text}")
             return None
-        return Scorecard.model_validate(r.json())
+
+        if not r.ok:
+            logger.warning(f"API error during close scorecard: {r.status_code} - {response_data}")
+            return None
+            
+        return Scorecard.model_validate(response_data)
 
     def cleanup(self, scorecard: Optional[Scorecard] = None) -> None:
         """Cleanup all agents."""

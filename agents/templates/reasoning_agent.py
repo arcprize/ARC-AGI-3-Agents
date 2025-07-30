@@ -49,6 +49,7 @@ class ReasoningAgent(ReasoningLLM):
     MODEL = "o4-mini"
     MESSAGE_LIMIT = 5
     REASONING_EFFORT = "high"
+    ZONE_SIZE = 16
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -63,7 +64,7 @@ class ReasoningAgent(ReasoningLLM):
         self.screen_history = []
 
     def generate_grid_image_with_zone(
-        self, grid: List[List[int]], cell_size: int = 40, zone_size: int = 20
+        self, grid: List[List[int]], cell_size: int = 40
     ) -> bytes:
         """Generate PIL image of the grid with colored cells and zone coordinates."""
         if not grid or not grid[0]:
@@ -119,8 +120,8 @@ class ReasoningAgent(ReasoningLLM):
                 )
 
         # Draw zone coordinates and borders
-        for y in range(0, height, zone_size):
-            for x in range(0, width, zone_size):
+        for y in range(0, height, self.ZONE_SIZE):
+            for x in range(0, width, self.ZONE_SIZE):
                 # Draw zone coordinate label
                 try:
                     font = ImageFont.load_default()
@@ -137,8 +138,8 @@ class ReasoningAgent(ReasoningLLM):
                     logger.error(f"Failed to draw zone label at ({x},{y}): {e}")
 
                 # Draw zone boundary
-                zone_width = min(zone_size, width - x) * cell_size
-                zone_height = min(zone_size, height - y) * cell_size
+                zone_width = min(self.ZONE_SIZE, width - x) * cell_size
+                zone_height = min(self.ZONE_SIZE, height - y) * cell_size
                 draw.rectangle(
                     [
                         x * cell_size,
@@ -237,7 +238,7 @@ How to proceed:
 Hint:
 - The game is a 2D platformer.
 - The player can move up, down, left and right.
-- The player has a blue body and a yellow head.
+- The player has a blue body and an orange head.
 - There are walls in black.
 - The door has a pink border and a shape inside.
         """
@@ -279,7 +280,7 @@ Hint:
     def define_next_action(self, latest_frame: FrameData) -> ReasoningActionResponse:
         """Define next action for the reasoning agent."""
         # Generate map image
-        current_grid = latest_frame.frame[0] if latest_frame.frame else []
+        current_grid = latest_frame.frame[-1] if latest_frame.frame else []
         map_image = self.generate_grid_image_with_zone(current_grid)
 
         # Build messages

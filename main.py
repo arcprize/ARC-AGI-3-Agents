@@ -25,7 +25,12 @@ logger = logging.getLogger()
 SCHEME = os.environ.get("SCHEME", "http")
 HOST = os.environ.get("HOST", "localhost")
 PORT = os.environ.get("PORT", 8001)
-ROOT_URL = f"{SCHEME}://{HOST}:{PORT}"
+
+# Hide standard ports in URL
+if (SCHEME == "http" and str(PORT) == "80") or (SCHEME == "https" and str(PORT) == "443"):
+    ROOT_URL = f"{SCHEME}://{HOST}"
+else:
+    ROOT_URL = f"{SCHEME}://{HOST}:{PORT}"
 HEADERS = {
     "X-API-Key": os.getenv("ARC_API_KEY", ""),
     "Accept": "application/json",
@@ -184,7 +189,16 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, partial(cleanup, swarm))  # handler for Ctrl+C
 
-    agent_thread.join()
+    try:
+        # Wait for the agent thread to complete
+        while agent_thread.is_alive():
+            agent_thread.join(timeout=5)  # Check every 5 second
+    except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt received in main thread")
+        cleanup(swarm, signal.SIGINT, None)
+    except Exception as e:
+        logger.error(f"Unexpected error in main thread: {e}")
+        cleanup(swarm, None, None)
 
 
 if __name__ == "__main__":
