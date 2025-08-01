@@ -39,7 +39,7 @@ For more details see the full docs at <https://three.arcprize.org/docs>.
 
 ```bash
 # Install the optional extra
-uv sync --agentops
+uv sync --extra agentops
 
 # Or with pip
 pip install -U agentops
