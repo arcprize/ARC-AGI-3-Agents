@@ -40,7 +40,7 @@ For more information, see the [documentation](https://three.arcprize.org/docs#qu
 AgentOps is already included as an optional dependency in this project. To install it:
 
 ```bash
-uv sync --agentops
+uv sync --extra agentops
 ```
 
 Or if you're installing manually:
