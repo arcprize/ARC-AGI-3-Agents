@@ -99,15 +99,15 @@ class Swarm:
             t.join()
 
         # all agents are now done
-        card_id_for_url = self.card_id
-        scorecard = self.close_scorecard(self.card_id)
+        card_id = self.card_id
+        scorecard = self.close_scorecard(card_id)
         if scorecard:
             logger.info("--- FINAL SCORECARD REPORT ---")
             logger.info(json.dumps(scorecard.model_dump(), indent=2))
 
         # Provide web link to scorecard
-        if card_id_for_url:
-            scorecard_url = f"{self.ROOT_URL}/scorecards/{card_id_for_url}"
+        if card_id:
+            scorecard_url = f"{self.ROOT_URL}/scorecards/{card_id}"
             logger.info(f"View your scorecard online: {scorecard_url}")
 
         self.cleanup(scorecard)
