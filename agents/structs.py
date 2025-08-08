@@ -211,6 +211,7 @@ class FrameData(BaseModel):
     action_input: ActionInput = Field(default_factory=lambda: ActionInput())
     guid: Optional[str] = None
     full_reset: bool = False
+    available_actions: list[GameAction] = Field(default_factory=list)
 
     def is_empty(self) -> bool:
         return len(self.frame) == 0
