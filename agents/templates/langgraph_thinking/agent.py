@@ -11,7 +11,7 @@ from .nodes import act, analyze_frame_delta, check_key, init
 from .schema import LLM, AgentState
 
 
-class LangGraph(Agent):
+class LangGraphThinking(Agent):
     """A LangGraph agent, using a variety of tools to make decisions."""
 
     MAX_ACTIONS = 20
