@@ -62,8 +62,8 @@ def use_env_vars(monkeypatch):
 
     if not os.environ.get("ARC_API_KEY"):
         monkeypatch.setenv("ARC_API_KEY", "test-key")
-    if not os.environ.get("OPENAI_API_KEY"):
-        monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    if not os.environ.get("LLM_API_KEY"):
+        monkeypatch.setenv("LLM_API_KEY", "test-llm-key")
     if not os.environ.get("SCHEME"):
         monkeypatch.setenv("SCHEME", "https")
     if not os.environ.get("HOST"):
