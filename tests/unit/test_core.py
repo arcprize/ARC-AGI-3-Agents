@@ -8,6 +8,7 @@ from agents.structs import (
     GameState,
     Scorecard,
 )
+from agents.templates.langgraph_random_agent import LangGraphRandom
 from agents.templates.random_agent import Random
 
 
@@ -212,6 +213,62 @@ class TestRandomAgent:
         action = agent.choose_action([sample_frame], sample_frame)
         assert action == GameAction.RESET
 
+        sample_frame.state = GameState.NOT_FINISHED
+        action = agent.choose_action([sample_frame], sample_frame)
+        assert action != GameAction.RESET
+        assert isinstance(action, GameAction)
+
+        sample_frame.state = GameState.WIN
+        assert agent.is_done([sample_frame], sample_frame) is True
+
+        sample_frame.state = GameState.NOT_FINISHED
+        assert agent.is_done([sample_frame], sample_frame) is False
+
+
+@pytest.mark.unit
+class TestLangGraphRandomAgent:
+    def test_agent_init(self):
+        agent = LangGraphRandom(
+            card_id="test-card",
+            game_id="test-game",
+            agent_name="test-agent",
+            ROOT_URL="https://example.com",
+            record=False,
+        )
+
+        assert agent.game_id == "test-game"
+        assert agent.card_id == "test-card"
+        assert agent.MAX_ACTIONS == 80
+        assert agent.action_counter == 0
+
+        # Test that workflow is properly initialized
+        assert agent.workflow is not None
+
+        name = agent.name
+        assert "test-game" in name
+        assert "langgraphrandom" in name.lower()
+        assert "80" in name
+
+    def test_agent_action_logic(self, sample_frame):
+        agent = LangGraphRandom(
+            card_id="test-card",
+            game_id="test-game",
+            agent_name="test-agent",
+            ROOT_URL="https://example.com",
+            record=False,
+        )
+
+        # NOT_PLAYED state -> RESET
+        sample_frame.state = GameState.NOT_PLAYED
+        action = agent.choose_action([sample_frame], sample_frame)
+        assert action == GameAction.RESET
+
+        # GAME_OVER state -> RESET
+        sample_frame.state = GameState.GAME_OVER
+        action = agent.choose_action([sample_frame], sample_frame)
+        assert action == GameAction.RESET
+
+        # active game state -> random action (not RESET)
         sample_frame.state = GameState.NOT_FINISHED
         action = agent.choose_action([sample_frame], sample_frame)
         assert action != GameAction.RESET

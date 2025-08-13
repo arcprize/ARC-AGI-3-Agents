@@ -1,7 +1,7 @@
 # ruff: noqa: E402
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=".env-example")
+load_dotenv(dotenv_path=".env.example")
 load_dotenv(dotenv_path=".env", override=True)
 
 import argparse
@@ -25,7 +25,14 @@ logger = logging.getLogger()
 SCHEME = os.environ.get("SCHEME", "http")
 HOST = os.environ.get("HOST", "localhost")
 PORT = os.environ.get("PORT", 8001)
-ROOT_URL = f"{SCHEME}://{HOST}:{PORT}"
+
+# Hide standard ports in URL
+if (SCHEME == "http" and str(PORT) == "80") or (
+    SCHEME == "https" and str(PORT) == "443"
+):
+    ROOT_URL = f"{SCHEME}://{HOST}"
+else:
+    ROOT_URL = f"{SCHEME}://{HOST}:{PORT}"
 HEADERS = {
     "X-API-Key": os.getenv("ARC_API_KEY", ""),
     "Accept": "application/json",
@@ -43,13 +50,18 @@ def cleanup(
     frame: Optional[FrameType],
 ) -> None:
     logger.info("Received SIGINT, exiting...")
-
-    if swarm.card_id:
-        scorecard = swarm.close_scorecard(swarm.card_id)
+    card_id = swarm.card_id
+    if card_id:
+        scorecard = swarm.close_scorecard(card_id)
         if scorecard:
-            logger.info("--- EXITING SCORECARD REPORT ---")
+            logger.info("--- EXISTING SCORECARD REPORT ---")
             logger.info(json.dumps(scorecard.model_dump(), indent=2))
             swarm.cleanup(scorecard)
+        
+        # Provide web link to scorecard
+        if card_id:
+            scorecard_url = f"{ROOT_URL}/scorecards/{card_id}"
+            logger.info(f"View your scorecard online: {scorecard_url}")
 
     sys.exit(0)
 
@@ -179,7 +191,16 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, partial(cleanup, swarm))  # handler for Ctrl+C
 
-    agent_thread.join()
+    try:
+        # Wait for the agent thread to complete
+        while agent_thread.is_alive():
+            agent_thread.join(timeout=5)  # Check every 5 second
+    except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt received in main thread")
+        cleanup(swarm, signal.SIGINT, None)
+    except Exception as e:
+        logger.error(f"Unexpected error in main thread: {e}")
+        cleanup(swarm, None, None)
 
 
 if __name__ == "__main__":

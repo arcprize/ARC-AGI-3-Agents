@@ -3,11 +3,14 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from typing import Any, Optional
 
 import requests
+import requests.cookies
 from pydantic import ValidationError
 from requests import Response
+from requests.cookies import RequestsCookieJar
 
 from .recorder import Recorder
 from .structs import FrameData, GameAction, GameState, Scorecard
@@ -47,6 +50,7 @@ class Agent(ABC):
         ROOT_URL: str,
         record: bool,
         tags: Optional[list[str]] = None,
+        cookies: requests.cookies.RequestsCookieJar = RequestsCookieJar(),
     ) -> None:
         self.ROOT_URL = ROOT_URL
         self.card_id = card_id
@@ -64,6 +68,7 @@ class Agent(ABC):
         }
         # Reuse session
         self._session = requests.Session()
+        self._session.cookies = deepcopy(cookies)
         self._session.headers.update(self.headers)
 
     @trace_agent_session

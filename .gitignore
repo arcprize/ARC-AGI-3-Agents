@@ -9,7 +9,13 @@
 .mypy_cache/
 **/__pycache__/
 
+# IDE settings
+.vscode/
+
 # Recordings
 recordings/*.recording.jsonl
 tests/recordings/*.recording.jsonl
 tests/recordings/not-a-recording.txt
+
+# Long-term memory
+memory.db
