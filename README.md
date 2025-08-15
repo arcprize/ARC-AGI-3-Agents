@@ -11,10 +11,10 @@ git clone https://github.com/arcprize/ARC-AGI-3-Agents.git
 cd ARC-AGI-3-Agents
 ```
 
-2. Copy .env-example to .env
+2. Copy .env.example to .env
 
 ```bash
-cp .env-example .env
+cp .env.example .env
 ```
 
 3. Get an API key from the [ARC-AGI-3 Website](https://three.arcprize.org/) and set it as an environment variable in your .env file.
