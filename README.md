@@ -31,6 +31,18 @@ uv run main.py --agent=random --game=ls20
 
 For more information, see the [documentation](https://three.arcprize.org/docs#quick-start) or the [tutorial video](https://youtu.be/xEVg9dcJMkw).
 
+## Changelog
+## [0.9.2] - 2025-08-19
+
+### Added
+- `available_actions` to `FrameData`
+- `ACTION7` as possible `GameAction`
+
+## Changelog
+## [0.9.1] - 2025-07-18
+
+Initial Release
+
 ## Observability (Optional)
 
 [AgentOps](https://agentops.ai/) is an observability platform designed for providing real-time monitoring, debugging, and analytics for your agent's behavior, helping you understand how your agents perform and make decisions.

@@ -57,7 +57,7 @@ def cleanup(
             logger.info("--- EXISTING SCORECARD REPORT ---")
             logger.info(json.dumps(scorecard.model_dump(), indent=2))
             swarm.cleanup(scorecard)
-        
+
         # Provide web link to scorecard
         if card_id:
             scorecard_url = f"{ROOT_URL}/scorecards/{card_id}"
