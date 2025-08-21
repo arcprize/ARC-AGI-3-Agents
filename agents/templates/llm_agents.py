@@ -5,7 +5,7 @@ import textwrap
 from typing import Any, Optional
 
 import openai
-from openai import OpenAI as OpenAIClient
+from openai import OpenAI
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
@@ -22,7 +22,7 @@ class LLM(Agent):
     MODEL_REQUIRES_TOOLS: bool = False
 
     MESSAGE_LIMIT: int = 10
-    MODEL: str = "gpt-4o-mini"
+    MODEL: str = os.environ.get("LLM_MODEL",  "gpt-4o-mini")
     messages: list[dict[str, Any]]
     token_counter: int
 
@@ -60,7 +60,7 @@ class LLM(Agent):
         logging.getLogger("openai").setLevel(logging.CRITICAL)
         logging.getLogger("httpx").setLevel(logging.CRITICAL)
 
-        client = OpenAIClient(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        client = OpenAI(api_key=os.environ.get("LLM_API_KEY", ""), base_url=os.environ.get("LLM_BASE_URL"))
 
         functions = self.build_functions()
         tools = self.build_tools()
@@ -406,7 +406,7 @@ class ReasoningLLM(LLM, Agent):
     MAX_ACTIONS = 80
     DO_OBSERVATION = True
     MODEL_REQUIRES_TOOLS = True
-    MODEL = "o4-mini"
+    MODEL = os.environ.get("LLM_MODEL", "o4-mini")
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -474,7 +474,7 @@ class FastLLM(LLM, Agent):
 
     MAX_ACTIONS = 80
     DO_OBSERVATION = False
-    MODEL = "gpt-4o-mini"
+    MODEL = os.environ.get("LLM_MODEL",  "gpt-4o-mini")
 
     def build_user_prompt(self, latest_frame: FrameData) -> str:
         return textwrap.dedent(
@@ -611,7 +611,7 @@ class MyCustomLLM(LLM):
     """Template for creating your own custom LLM agent."""
 
     MAX_ACTIONS = 80
-    MODEL = "gpt-4o-mini"
+    MODEL = os.environ.get("LLM_MODEL",  "gpt-4o-mini")
     DO_OBSERVATION = True
 
     def build_user_prompt(self, latest_frame: FrameData) -> str:

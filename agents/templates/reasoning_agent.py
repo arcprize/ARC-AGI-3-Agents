@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import logging
+import os
 import textwrap
 from typing import Any, Dict, List, Literal
 
@@ -46,7 +47,7 @@ class ReasoningAgent(ReasoningLLM):
 
     MAX_ACTIONS = 400
     DO_OBSERVATION = True
-    MODEL = "o4-mini"
+    MODEL = os.environ.get("LLM_MODEL", "o4-mini")
     MESSAGE_LIMIT = 5
     REASONING_EFFORT = "high"
     ZONE_SIZE = 16
@@ -56,7 +57,7 @@ class ReasoningAgent(ReasoningLLM):
         self.history: List[ReasoningActionResponse] = []
         self.screen_history: List[bytes] = []
         self.max_screen_history = 10  # Limit screen history to prevent memory leak
-        self.client = OpenAI()
+        self.client = OpenAI(api_key=os.environ.get("LLM_API_KEY", ""), base_url=os.environ.get("LLM_BASE_URL"))
 
     def clear_history(self) -> None:
         """Clear all history when transitioning between levels."""
