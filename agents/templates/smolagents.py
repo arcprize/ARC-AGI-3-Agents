@@ -37,7 +37,7 @@ class SmolCodingAgent(LLM, Agent):
     def main(self) -> None:
         """The main function to initialize the agent and play the game until finished."""
         self.timer = time.time()
-        model = OpenAIServerModel(self.MODEL, api_key=os.environ.get("LLM_API_KEY", ""), api_base=os.environ.get("LLM_BASE_URL", ""))
+        model = OpenAIServerModel(self.MODEL, api_key=os.environ.get("LLM_API_KEY", ""), api_base=os.environ.get("LLM_BASE_URL"))
 
         # A CodeAgent calls and manipulates tools as Python functions which enables complex reasoning, algorithms etc.
         # Think BFS, DFS, A*, etc.
@@ -257,7 +257,7 @@ class SmolVisionAgent(LLM, Agent):
     def main(self) -> None:
         """The main agent loop. Play the game_id until finished, then exits."""
         self.timer = time.time()
-        model = OpenAIServerModel(self.MODEL, api_key=os.environ.get("LLM_API_KEY", ""), api_base=os.environ.get("LLM_BASE_URL", ""))
+        model = OpenAIServerModel(self.MODEL, api_key=os.environ.get("LLM_API_KEY", ""), api_base=os.environ.get("LLM_BASE_URL"))
 
         agent = ToolCallingAgent(
             model=model,

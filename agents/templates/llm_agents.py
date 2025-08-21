@@ -5,7 +5,7 @@ import textwrap
 from typing import Any, Optional
 
 import openai
-from openai import OpenAI as OpenAIClient
+from openai import OpenAI
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
@@ -60,7 +60,7 @@ class LLM(Agent):
         logging.getLogger("openai").setLevel(logging.CRITICAL)
         logging.getLogger("httpx").setLevel(logging.CRITICAL)
 
-        client = OpenAIClient(api_key=os.environ.get("LLM_API_KEY", ""), base_url=os.environ.get("LLM_BASE_URL", ""))
+        client = OpenAI(api_key=os.environ.get("LLM_API_KEY", ""), base_url=os.environ.get("LLM_BASE_URL"))
 
         functions = self.build_functions()
         tools = self.build_tools()

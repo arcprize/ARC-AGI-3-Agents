@@ -57,7 +57,7 @@ class ReasoningAgent(ReasoningLLM):
         self.history: List[ReasoningActionResponse] = []
         self.screen_history: List[bytes] = []
         self.max_screen_history = 10  # Limit screen history to prevent memory leak
-        self.client = OpenAI(api_key=os.environ.get("LLM_API_KEY", ""), base_url=os.environ.get("LLM_BASE_URL", ""))
+        self.client = OpenAI(api_key=os.environ.get("LLM_API_KEY", ""), base_url=os.environ.get("LLM_BASE_URL"))
 
     def clear_history(self) -> None:
         """Clear all history when transitioning between levels."""
