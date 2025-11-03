@@ -1,3 +1,12 @@
+"""AbstractionNavigator: iterate fast, capture insights.
+
+Update cycle:
+  1. Run `uv run main.py --agent=abstractionnavigator --game=<id>`.
+  2. Inspect the logs + `recordings/*.tracking.json` for new behaviour.
+  3. Edit abstractions or heuristics in this file (generic section first, game block last).
+  4. Re-run, rinse, repeat—commit once a new abstraction proves useful.
+"""
+
 import json
 import logging
 import random
