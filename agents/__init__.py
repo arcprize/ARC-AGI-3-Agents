@@ -28,8 +28,6 @@ for rec in Recorder.list():
 
 # update the agent dictionary to include subclasses of LLM class
 AVAILABLE_AGENTS["reasoningagent"] = ReasoningAgent
-AVAILABLE_AGENTS["abstractionnavigator"] = AbstractionNavigator
-AVAILABLE_AGENTS["random"] = Random
 
 __all__ = [
     "Swarm",
