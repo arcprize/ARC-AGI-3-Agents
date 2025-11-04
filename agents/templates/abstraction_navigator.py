@@ -84,8 +84,7 @@ class AbstractionNavigator(Agent):
         self.energy_capacity: Optional[int] = None
         self.current_level = 0
         self.level_events: list[LevelEvent] = []
-        self._level_start_hash: Optional[FrameHash] = None
-        self._overlay_seen = False
+        self._last_score: int = 0
 
         self._knowledge_dirty = False
         self.abstraction_builders: list[
@@ -235,8 +234,7 @@ class AbstractionNavigator(Agent):
         self.current_level = 0
         self.level_events = []
         self.last_snapshot = None
-        self._level_start_hash = None
-        self._overlay_seen = False
+        self._last_score = 0
 
     def _observe(self, frame: FrameData) -> None:
         if frame.is_empty() or not frame.frame:
@@ -267,6 +265,7 @@ class AbstractionNavigator(Agent):
 
         self.last_state_hash = frame_hash
         self.last_snapshot = snapshot
+        self._record_level_from_score(frame, snapshot)
 
     def cleanup(self, scorecard: Optional[Any] = None) -> None:
         states_visited_run = len(self.unique_states_this_run)
@@ -498,8 +497,6 @@ class AbstractionNavigator(Agent):
     ) -> None:
         measurement = self._measure_energy_blocks(snapshot.grid)
         if measurement is None:
-            if self._looks_like_energy_overlay(snapshot.grid):
-                self._overlay_seen = True
             return
         blocks_filled, capacity = measurement
         snapshot.add(
@@ -511,82 +508,41 @@ class AbstractionNavigator(Agent):
                 "capacity": capacity,
             },
         )
-        if (
-            self._overlay_seen
-            and self._level_start_hash is not None
-            and snapshot.frame_hash == self._level_start_hash
-        ):
-            self._overlay_seen = False
-            snapshot.add("level", self.current_level)
-            return
 
-        self._overlay_seen = False
-        self._detect_level_transition(snapshot, blocks_filled, capacity)
-
-    def _detect_level_transition(
-        self, snapshot: FrameAbstraction, blocks: int, capacity: int
+    def _record_level_from_score(
+        self, frame: FrameData, snapshot: FrameAbstraction
     ) -> None:
-        previous_snapshot = self.last_snapshot
-        if previous_snapshot is None:
-            self.energy_capacity = capacity
-            self._level_start_hash = snapshot.frame_hash
+        current_score = frame.score
+        if current_score == self._last_score:
             snapshot.add("level", self.current_level)
             return
 
-        prev_info = previous_snapshot.get("energy") or {}
-        prev_blocks = prev_info.get("blocks", prev_info.get("segments"))
+        previous_score = self._last_score
+        self._last_score = current_score
 
-        if snapshot.frame_hash == previous_snapshot.frame_hash:
-            snapshot.add("level", self.current_level)
-            return
-
-        if capacity > (self.energy_capacity or 0):
-            self.energy_capacity = capacity
-
-        if prev_blocks is None:
-            snapshot.add("level", self.current_level)
-            return
-
-        energy_refilled = blocks > prev_blocks and (
-            blocks >= capacity - 1 or blocks - prev_blocks >= 2
-        )
-
-        if not energy_refilled:
-            snapshot.add("level", self.current_level)
-            return
-        self.current_level += 1
-        event: LevelEvent = {
-            "level": self.current_level,
-            "step": self.action_counter,
-            "state_hash": snapshot.frame_hash,
-            "energy": blocks,
-            "timestamp": time.time(),
-        }
-        self.level_events.append(event)
-        snapshot.add("level_transition", event)
-        logger.info(
-            "%s detected new level %d at step %d",
-            self.game_id,
-            self.current_level,
-            self.action_counter,
-        )
+        if current_score > previous_score:
+            self.current_level = current_score
+            energy_info = snapshot.get("energy") or {}
+            event: LevelEvent = {
+                "level": self.current_level,
+                "step": self.action_counter,
+                "state_hash": snapshot.frame_hash,
+                "energy": energy_info.get("blocks", 0),
+                "timestamp": time.time(),
+            }
+            self.level_events.append(event)
+            snapshot.add("level_transition", event)
+            logger.info(
+                "%s detected new level %d (score=%d) at step %d",
+                self.game_id,
+                self.current_level,
+                current_score,
+                self.action_counter,
+            )
+        else:
+            self.current_level = current_score
 
         snapshot.add("level", self.current_level)
-    @staticmethod
-    def _looks_like_energy_overlay(grid: list[list[Any]]) -> bool:
-        row_index = 2
-        if len(grid) <= row_index or not grid[row_index]:
-            return False
-        row = grid[row_index]
-        values = set()
-        for cell in row[2::2]:
-            if isinstance(cell, int):
-                values.add(cell)
-            elif isinstance(cell, list) and cell and isinstance(cell[0], int):
-                values.add(cell[0])
-            else:
-                return False
-        return values == {8}
 
     def _detect_player(self, grid: list[list[Any]]) -> Optional[dict[str, Any]]:
         positions: list[tuple[int, int]] = []
