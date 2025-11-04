@@ -84,6 +84,8 @@ class AbstractionNavigator(Agent):
         self.energy_capacity: Optional[int] = None
         self.current_level = 0
         self.level_events: list[LevelEvent] = []
+        self._level_start_hash: Optional[FrameHash] = None
+        self._overlay_seen = False
 
         self._knowledge_dirty = False
         self.abstraction_builders: list[
@@ -233,6 +235,8 @@ class AbstractionNavigator(Agent):
         self.current_level = 0
         self.level_events = []
         self.last_snapshot = None
+        self._level_start_hash = None
+        self._overlay_seen = False
 
     def _observe(self, frame: FrameData) -> None:
         if frame.is_empty() or not frame.frame:
@@ -494,6 +498,8 @@ class AbstractionNavigator(Agent):
     ) -> None:
         measurement = self._measure_energy_blocks(snapshot.grid)
         if measurement is None:
+            if self._looks_like_energy_overlay(snapshot.grid):
+                self._overlay_seen = True
             return
         blocks_filled, capacity = measurement
         snapshot.add(
@@ -505,6 +511,16 @@ class AbstractionNavigator(Agent):
                 "capacity": capacity,
             },
         )
+        if (
+            self._overlay_seen
+            and self._level_start_hash is not None
+            and snapshot.frame_hash == self._level_start_hash
+        ):
+            self._overlay_seen = False
+            snapshot.add("level", self.current_level)
+            return
+
+        self._overlay_seen = False
         self._detect_level_transition(snapshot, blocks_filled, capacity)
 
     def _detect_level_transition(
@@ -513,15 +529,12 @@ class AbstractionNavigator(Agent):
         previous_snapshot = self.last_snapshot
         if previous_snapshot is None:
             self.energy_capacity = capacity
+            self._level_start_hash = snapshot.frame_hash
             snapshot.add("level", self.current_level)
             return
 
         prev_info = previous_snapshot.get("energy") or {}
         prev_blocks = prev_info.get("blocks", prev_info.get("segments"))
-
-        if not self._energy_refilled(prev_blocks, blocks, capacity):
-            snapshot.add("level", self.current_level)
-            return
 
         if snapshot.frame_hash == previous_snapshot.frame_hash:
             snapshot.add("level", self.current_level)
@@ -529,6 +542,18 @@ class AbstractionNavigator(Agent):
 
         if capacity > (self.energy_capacity or 0):
             self.energy_capacity = capacity
+
+        if prev_blocks is None:
+            snapshot.add("level", self.current_level)
+            return
+
+        energy_refilled = blocks > prev_blocks and (
+            blocks >= capacity - 1 or blocks - prev_blocks >= 2
+        )
+
+        if not energy_refilled:
+            snapshot.add("level", self.current_level)
+            return
         self.current_level += 1
         event: LevelEvent = {
             "level": self.current_level,
@@ -547,18 +572,21 @@ class AbstractionNavigator(Agent):
         )
 
         snapshot.add("level", self.current_level)
-
     @staticmethod
-    def _energy_refilled(
-        previous_blocks: Optional[int], current_blocks: int, capacity: int
-    ) -> bool:
-        if current_blocks <= 0:
+    def _looks_like_energy_overlay(grid: list[list[Any]]) -> bool:
+        row_index = 2
+        if len(grid) <= row_index or not grid[row_index]:
             return False
-        if previous_blocks == 0:
-            return True
-        if previous_blocks is None and capacity > 0:
-            return current_blocks >= max(1, capacity - 1)
-        return False
+        row = grid[row_index]
+        values = set()
+        for cell in row[2::2]:
+            if isinstance(cell, int):
+                values.add(cell)
+            elif isinstance(cell, list) and cell and isinstance(cell[0], int):
+                values.add(cell[0])
+            else:
+                return False
+        return values == {8}
 
     def _detect_player(self, grid: list[list[Any]]) -> Optional[dict[str, Any]]:
         positions: list[tuple[int, int]] = []
