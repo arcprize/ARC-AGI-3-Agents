@@ -13,7 +13,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TypedDict
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
@@ -21,6 +21,13 @@ from ..structs import FrameData, GameAction, GameState
 logger = logging.getLogger()
 
 # === Generic infrastructure ==================================================
+
+class LevelEvent(TypedDict):
+    level: int
+    step: int
+    state_hash: int
+    energy: int
+    timestamp: float
 
 
 @dataclass
@@ -61,8 +68,8 @@ class AbstractionNavigator(Agent):
         self.unique_states_this_run: set[int] = set()
 
         self.energy_capacity: Optional[int] = None
-        self.energy_history: list[int] = []
-        self.energy_depleted = False
+        self.current_level = 0
+        self.level_events: list[LevelEvent] = []
 
         self._knowledge_dirty = False
         self.abstraction_builders: list[
@@ -142,9 +149,9 @@ class AbstractionNavigator(Agent):
         self.last_action = None
         self.last_state_hash = None
         self.unique_states_this_run.clear()
-        self.energy_history.clear()
         self.energy_capacity = None
-        self.energy_depleted = False
+        self.current_level = 0
+        self.level_events = []
         self.last_snapshot = None
 
     def _observe(self, frame: FrameData) -> None:
@@ -187,12 +194,11 @@ class AbstractionNavigator(Agent):
             known_states_total,
         )
 
-        if self.energy_history:
+        if self.level_events:
             logger.info(
-                "%s energy segments (capacity=%s): %s",
+                "%s level transitions: %s",
                 self.game_id,
-                self.energy_capacity,
-                self.energy_history[-16:],
+                self.level_events,
             )
 
         if self._knowledge_dirty:
@@ -201,6 +207,7 @@ class AbstractionNavigator(Agent):
         self._persist_metrics(
             states_visited_run=states_visited_run,
             known_states_total=known_states_total,
+            level_events=self.level_events,
         )
 
         super().cleanup(scorecard)
@@ -208,7 +215,11 @@ class AbstractionNavigator(Agent):
     # --- Persistence ------------------------------------------------------
 
     def _persist_metrics(
-        self, *, states_visited_run: int, known_states_total: int
+        self,
+        *,
+        states_visited_run: int,
+        known_states_total: int,
+        level_events: list[LevelEvent],
     ) -> None:
         recorder = getattr(self, "recorder", None)
         if not recorder or not getattr(recorder, "filename", None):
@@ -223,7 +234,7 @@ class AbstractionNavigator(Agent):
             "states_visited_run": states_visited_run,
             "known_states_total": known_states_total,
             "energy_capacity": self.energy_capacity,
-            "energy_history": self.energy_history,
+            "level_events": level_events,
         }
 
         with target_path.open("w", encoding="utf-8") as fh:
@@ -379,39 +390,73 @@ class AbstractionNavigator(Agent):
     def _build_energy_abstraction(
         self, snapshot: FrameAbstraction, context: dict[str, Any]
     ) -> None:
-        measurement = self._measure_energy_segments(snapshot.grid)
+        measurement = self._measure_energy_blocks(snapshot.grid)
         if measurement is None:
             return
-        segments, capacity = measurement
+        blocks_filled, capacity = measurement
         snapshot.add(
             "energy",
             {
-                "segments": segments,
+                "blocks": blocks_filled,
+                # expose legacy field for downstream compatibility
+                "segments": blocks_filled,
                 "capacity": capacity,
             },
         )
-        self._update_energy_tracking(snapshot)
+        self._detect_level_transition(snapshot, blocks_filled, capacity)
 
-    def _update_energy_tracking(self, snapshot: FrameAbstraction) -> None:
-        info = snapshot.get("energy")
-        if not info:
+    def _detect_level_transition(
+        self, snapshot: FrameAbstraction, blocks: int, capacity: int
+    ) -> None:
+        previous_snapshot = self.last_snapshot
+        if previous_snapshot is None:
+            self.energy_capacity = capacity
+            snapshot.add("level", self.current_level)
             return
 
-        segments = info["segments"]
-        capacity = info["capacity"]
-        if self.energy_capacity is None or capacity > self.energy_capacity:
+        prev_info = previous_snapshot.get("energy") or {}
+        prev_blocks = prev_info.get("blocks", prev_info.get("segments"))
+
+        if not self._energy_refilled(prev_blocks, blocks, capacity):
+            snapshot.add("level", self.current_level)
+            return
+
+        if snapshot.frame_hash == previous_snapshot.frame_hash:
+            snapshot.add("level", self.current_level)
+            return
+
+        if capacity > (self.energy_capacity or 0):
             self.energy_capacity = capacity
+        self.current_level += 1
+        event: LevelEvent = {
+            "level": self.current_level,
+            "step": self.action_counter,
+            "state_hash": snapshot.frame_hash,
+            "energy": blocks,
+            "timestamp": time.time(),
+        }
+        self.level_events.append(event)
+        snapshot.add("level_transition", event)
+        logger.info(
+            "%s detected new level %d at step %d",
+            self.game_id,
+            self.current_level,
+            self.action_counter,
+        )
 
-        self.energy_history.append(segments)
-        if len(self.energy_history) > 64:
-            self.energy_history = self.energy_history[-64:]
+        snapshot.add("level", self.current_level)
 
-        if segments == 0 and not self.energy_depleted:
-            logger.debug("%s energy depleted", self.game_id)
-            self.energy_depleted = True
-        elif segments > 0 and self.energy_depleted:
-            logger.debug("%s energy restored to %d segments", self.game_id, segments)
-            self.energy_depleted = False
+    @staticmethod
+    def _energy_refilled(
+        previous_blocks: Optional[int], current_blocks: int, capacity: int
+    ) -> bool:
+        if current_blocks <= 0:
+            return False
+        if previous_blocks == 0:
+            return True
+        if previous_blocks is None and capacity > 0:
+            return current_blocks >= max(1, capacity - 1)
+        return False
 
     def _detect_player(self, grid: list[list[Any]]) -> Optional[dict[str, Any]]:
         positions: list[tuple[int, int]] = []
@@ -449,7 +494,7 @@ class AbstractionNavigator(Agent):
             },
         }
 
-    def _measure_energy_segments(
+    def _measure_energy_blocks(
         self, grid: list[list[Any]]
     ) -> Optional[tuple[int, int]]:
         row_index = 2
@@ -457,23 +502,23 @@ class AbstractionNavigator(Agent):
             return None
         row = grid[row_index]
 
-        segments: list[int] = []
+        blocks: list[int] = []
         for x in range(2, len(row), 2):
             value = self._cell_value(row[x])
             if value in (3, 15):
-                segments.append(value)
-            elif segments:
+                blocks.append(value)
+            elif blocks:
                 break
 
-        total = len(segments)
+        total = len(blocks)
         if total < 6:
             values = {self._cell_value(row[x]) for x in range(2, len(row), 2)}
             if values == {8} and self.energy_capacity:
                 return 0, self.energy_capacity
             return None
 
-        if any(v not in (3, 15) for v in segments):
+        if any(v not in (3, 15) for v in blocks):
             return None
 
-        filled = sum(1 for v in segments if v == 15)
+        filled = sum(1 for v in blocks if v == 15)
         return filled, total
