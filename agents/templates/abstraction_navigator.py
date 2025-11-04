@@ -12,8 +12,9 @@ import logging
 import random
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional, TypedDict
+from typing import Any, Callable, Optional, TypedDict, NewType
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
@@ -21,6 +22,10 @@ from ..structs import FrameData, GameAction, GameState
 logger = logging.getLogger()
 
 # === Generic infrastructure ==================================================
+
+
+FrameHash = NewType("FrameHash", int)
+
 
 class LevelEvent(TypedDict):
     level: int
@@ -30,11 +35,18 @@ class LevelEvent(TypedDict):
     timestamp: float
 
 
+class NavigatorMode(str, Enum):
+    """Operating modes for the abstraction navigator."""
+
+    EXPLORE = "explore"
+    TODO = "todo"
+
+
 @dataclass
 class FrameAbstraction:
     """In-memory snapshot of a frame enhanced with higher-level abstractions."""
 
-    frame_hash: int
+    frame_hash: FrameHash
     grid: list[list[Any]]
     abstractions: dict[str, Any] = field(default_factory=dict)
 
@@ -57,15 +69,17 @@ class AbstractionNavigator(Agent):
     ]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        mode_value = kwargs.pop("mode", NavigatorMode.EXPLORE)
+        self.mode = NavigatorMode(mode_value)
         super().__init__(*args, **kwargs)
         seed = int(time.time() * 1_000_000) ^ hash(self.game_id)
         self.rng = random.Random(seed)
         self.last_action: Optional[GameAction] = None
-        self.last_state_hash: Optional[int] = None
+        self.last_state_hash: Optional[FrameHash] = None
 
         self.knowledge_path = Path("agents/knowledge/random_blocks.json")
-        self.state_visit_counts, self.state_transition_counts = self._load_knowledge()
-        self.unique_states_this_run: set[int] = set()
+        self.state_visit_counts, self.state_transition_targets = self._load_knowledge()
+        self.unique_states_this_run: set[FrameHash] = set()
 
         self.energy_capacity: Optional[int] = None
         self.current_level = 0
@@ -100,40 +114,70 @@ class AbstractionNavigator(Agent):
             action.reasoning = "resetting before exploration"
             return action
 
+        if self.mode is NavigatorMode.TODO:
+            logger.info("%s TODO mode: planning logic not yet implemented", self.game_id)
+            raise NotImplementedError("Navigator TODO mode is a placeholder")
+
         self._observe(latest_frame)
 
+        current_state = self.last_state_hash
         available_actions = list(latest_frame.available_actions or [])
         if not available_actions:
             available_actions = [GameAction.RESET]
 
         arrow_actions = [a for a in available_actions if a in self.ARROW_ACTIONS]
         if not arrow_actions:
-            action = self.rng.choice(available_actions)
+            action = self._choose_fallback_action(available_actions, current_state)
             action.reasoning = f"following available action ({action.name})"
             self.last_action = action if action in self.ARROW_ACTIONS else None
             return action
 
-        chosen = self._select_exploratory_action(arrow_actions)
+        chosen = self._select_exploratory_action(current_state, arrow_actions)
+        if chosen is None:
+            action = self._choose_fallback_action(available_actions, current_state)
+            self.last_action = action if action in self.ARROW_ACTIONS else None
+            if action is GameAction.RESET:
+                action.reasoning = "no unexplored actions; resetting"
+            else:
+                action.reasoning = f"fallback with {action.name}"
+            return action
+
         chosen.reasoning = f"exploring with {chosen.name}"
         self.last_action = chosen
         return chosen
 
-    def _select_exploratory_action(self, candidates: list[GameAction]) -> GameAction:
-        current_state = self.last_state_hash
+    def _select_exploratory_action(
+        self, current_state: Optional[FrameHash], candidates: list[GameAction]
+    ) -> Optional[GameAction]:
         if current_state is None:
             return self.rng.choice(candidates)
+
+        viable = [
+            action
+            for action in candidates
+            if not self._is_action_blocked(current_state, action)
+        ]
+        viable = [
+            action
+            for action in viable
+            if not self._is_action_known(current_state, action)
+        ]
+
+        if not viable:
+            return None
+        candidates = viable
 
         unknown_actions: list[GameAction] = []
         scored_actions: list[tuple[int, GameAction]] = []
 
         for action in candidates:
             key = (self.game_id, current_state, action)
-            transition_counts = self.state_transition_counts.get(key)
-            if not transition_counts:
+            target = self.state_transition_targets.get(key)
+            if target is None:
                 unknown_actions.append(action)
                 continue
-            total = sum(transition_counts.values())
-            scored_actions.append((total, action))
+            visits = self.state_visit_counts.get(self.game_id, {}).get(target, 0)
+            scored_actions.append((visits, action))
 
         if unknown_actions:
             return self.rng.choice(unknown_actions)
@@ -144,6 +188,42 @@ class AbstractionNavigator(Agent):
             return self.rng.choice(best)
 
         return self.rng.choice(candidates)
+
+    def _choose_fallback_action(
+        self,
+        available_actions: list[GameAction],
+        current_state: Optional[FrameHash],
+    ) -> GameAction:
+        choices = list(available_actions)
+        if current_state is not None:
+            filtered = [
+                action
+                for action in choices
+                if action is GameAction.RESET
+                or not self._is_action_blocked(current_state, action)
+            ]
+            filtered = [
+                action
+                for action in filtered
+                if action is GameAction.RESET
+                or not self._is_action_known(current_state, action)
+            ]
+            if filtered:
+                choices = filtered
+            else:
+                return GameAction.RESET
+        return self.rng.choice(choices)
+
+    def _is_action_blocked(self, state_hash: FrameHash, action: GameAction) -> bool:
+        key = (self.game_id, state_hash, action)
+        target = self.state_transition_targets.get(key)
+        if target is None:
+            return False
+        return target == state_hash
+
+    def _is_action_known(self, state_hash: FrameHash, action: GameAction) -> bool:
+        key = (self.game_id, state_hash, action)
+        return key in self.state_transition_targets
 
     def _reset_tracking(self) -> None:
         self.last_action = None
@@ -244,11 +324,11 @@ class AbstractionNavigator(Agent):
         self,
     ) -> tuple[
         dict[str, dict[int, int]],
-        dict[tuple[str, int, GameAction], dict[int, int]],
+        dict[tuple[str, int, GameAction], int],
     ]:
         state_visits: dict[str, dict[int, int]] = {}
         state_transitions: dict[
-            tuple[str, int, GameAction], dict[int, int]
+            tuple[str, int, GameAction], int
         ] = {}
 
         if not self.knowledge_path.exists():
@@ -273,7 +353,7 @@ class AbstractionNavigator(Agent):
                 visits: dict[int, int] = {}
                 for hash_str, count in visit_counts.items():
                     try:
-                        visits[int(hash_str)] = int(count)
+                        visits[FrameHash(int(hash_str))] = int(count)
                     except (TypeError, ValueError):
                         continue
                 if visits:
@@ -287,24 +367,38 @@ class AbstractionNavigator(Agent):
                 game_id = item.get("game_id")
                 source = item.get("source")
                 action_name = item.get("action")
-                targets = item.get("targets", {})
                 if (
                     not isinstance(game_id, str)
                     or not isinstance(source, int)
                     or not isinstance(action_name, str)
                     or action_name not in GameAction.__members__
-                    or not isinstance(targets, dict)
                 ):
                     continue
                 action = GameAction[action_name]
-                counts: dict[int, int] = {}
-                for target_hash_str, count in targets.items():
+                source_hash = FrameHash(source)
+                target_value = item.get("target")
+                if isinstance(target_value, int):
+                    state_transitions[(game_id, source_hash, action)] = FrameHash(
+                        target_value
+                    )
+                    continue
+                targets_dict = item.get("targets")
+                if isinstance(targets_dict, dict) and targets_dict:
                     try:
-                        counts[int(target_hash_str)] = int(count)
+                        target_hash_str, count = max(
+                            targets_dict.items(), key=lambda kv: kv[1]
+                        )
+                        target_hash = FrameHash(int(target_hash_str))
                     except (TypeError, ValueError):
                         continue
-                if counts:
-                    state_transitions[(game_id, source, action)] = counts
+                    if len({k for k in targets_dict}) > 1:
+                        logger.warning(
+                            "%s non-deterministic transition observed for state=%s action=%s; using most frequent target",
+                            self.game_id,
+                            source_hash,
+                            action_name,
+                        )
+                    state_transitions[(game_id, source_hash, action)] = target_hash
 
         return state_visits, state_transitions
 
@@ -321,12 +415,11 @@ class AbstractionNavigator(Agent):
             "state_transitions": [
                 {
                     "game_id": game_id,
-                    "source": source_hash,
+                    "source": int(source_hash),
                     "action": action.name,
-                    "targets": {str(target_hash): count for target_hash, count in targets.items()},
+                    "target": int(target_hash),
                 }
-                for (game_id, source_hash, action), targets in self.state_transition_counts.items()
-                if targets
+                for (game_id, source_hash, action), target_hash in self.state_transition_targets.items()
             ],
         }
         self.knowledge_path.write_text(json.dumps(payload, indent=2))
@@ -334,7 +427,7 @@ class AbstractionNavigator(Agent):
 
     # --- State tracking ---------------------------------------------------
 
-    def _record_state_visit(self, frame_hash: int) -> None:
+    def _record_state_visit(self, frame_hash: FrameHash) -> None:
         visits = self.state_visit_counts.setdefault(self.game_id, {})
         visits[frame_hash] = visits.get(frame_hash, 0) + 1
         self.unique_states_this_run.add(frame_hash)
@@ -342,24 +435,33 @@ class AbstractionNavigator(Agent):
 
     def _record_state_transition(
         self,
-        previous_hash: int,
+        previous_hash: FrameHash,
         action: GameAction,
-        next_hash: int,
+        next_hash: FrameHash,
     ) -> None:
         key = (self.game_id, previous_hash, action)
-        targets = self.state_transition_counts.setdefault(key, {})
-        targets[next_hash] = targets.get(next_hash, 0) + 1
-        self._knowledge_dirty = True
+        existing = self.state_transition_targets.get(key)
+        if existing is None:
+            self.state_transition_targets[key] = next_hash
+            self._knowledge_dirty = True
+            return
+        if existing != next_hash:
+            message = (
+                f"Non-deterministic transition for {self.game_id}: state={previous_hash}, "
+                f"action={action.name}, existing_target={existing}, new_target={next_hash}"
+            )
+            logger.error(message)
+            raise ValueError(message)
 
     @staticmethod
-    def _hash_frame(grid: list[list[Any]]) -> int:
+    def _hash_frame(grid: list[list[Any]]) -> FrameHash:
         if not grid:
-            return 0
+            return FrameHash(0)
         normalized = [
             tuple(AbstractionNavigator._cell_value(cell) for cell in row)
             for row in grid
         ]
-        return hash(tuple(normalized))
+        return FrameHash(hash(tuple(normalized)))
 
     @staticmethod
     def _cell_value(cell: Any) -> int:
