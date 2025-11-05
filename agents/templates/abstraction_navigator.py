@@ -14,18 +14,15 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional, TypedDict, NewType
+from typing import Any, Callable, Optional, TypedDict
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
+from .nfr_planner import FrameHash, NearFrontierPlanner, PlannerContext, StateKnowledge
 
 logger = logging.getLogger()
 
 # === Generic infrastructure ==================================================
-
-
-FrameHash = NewType("FrameHash", int)
-
 
 class LevelEvent(TypedDict):
     level: int
@@ -60,7 +57,7 @@ class FrameAbstraction:
 class AbstractionNavigator(Agent):
     """Exploration-focused agent that will grow into an abstraction navigator."""
 
-    MAX_ACTIONS = 30
+    MAX_ACTIONS = 100
     ARROW_ACTIONS = [
         GameAction.ACTION1,  # Up
         GameAction.ACTION2,  # Down
@@ -72,14 +69,22 @@ class AbstractionNavigator(Agent):
         mode_value = kwargs.pop("mode", NavigatorMode.EXPLORE)
         self.mode = NavigatorMode(mode_value)
         super().__init__(*args, **kwargs)
+        # --- NFR planning state ---
+        self._level_start_state: Optional[FrameHash] = None  # s0 of current level
         seed = int(time.time() * 1_000_000) ^ hash(self.game_id)
         self.rng = random.Random(seed)
         self.last_action: Optional[GameAction] = None
         self.last_state_hash: Optional[FrameHash] = None
 
         self.knowledge_path = Path("agents/knowledge/random_blocks.json")
-        self.state_visit_counts, self.state_transition_targets = self._load_knowledge()
+        self.state_knowledge: dict[FrameHash, StateKnowledge]
+        self.state_knowledge = self._load_knowledge()
         self.unique_states_this_run: set[FrameHash] = set()
+        planner_context = PlannerContext(
+            arrow_actions=self.ARROW_ACTIONS,
+            state_knowledge=self.state_knowledge,
+        )
+        self._nfr_planner = NearFrontierPlanner(planner_context)
 
         self.energy_capacity: Optional[int] = None
         self.current_level = 0
@@ -106,9 +111,11 @@ class AbstractionNavigator(Agent):
             ]
         )
 
+    
     def choose_action(
         self, frames: list[FrameData], latest_frame: FrameData
     ) -> GameAction:
+        # Reset the environment if it's not in a playable state
         if latest_frame.state in (GameState.NOT_PLAYED, GameState.GAME_OVER):
             self._reset_tracking()
             action = GameAction.RESET
@@ -119,112 +126,32 @@ class AbstractionNavigator(Agent):
             logger.info("%s TODO mode: planning logic not yet implemented", self.game_id)
             raise NotImplementedError("Navigator TODO mode is a placeholder")
 
+        # Observe and update discovered graph / level / HUD
         self._observe(latest_frame)
 
         current_state = self.last_state_hash
-        available_actions = list(latest_frame.available_actions or [])
-        if not available_actions:
-            available_actions = [GameAction.RESET]
-
-        arrow_actions = [a for a in available_actions if a in self.ARROW_ACTIONS]
-        if not arrow_actions:
-            action = self._choose_fallback_action(available_actions, current_state)
-            action.reasoning = f"following available action ({action.name})"
-            self.last_action = action if action in self.ARROW_ACTIONS else None
-            return action
-
-        chosen = self._select_exploratory_action(current_state, arrow_actions)
-        if chosen is None:
-            action = self._choose_fallback_action(available_actions, current_state)
-            self.last_action = action if action in self.ARROW_ACTIONS else None
-            if action is GameAction.RESET:
-                action.reasoning = "no unexplored actions; resetting"
-            else:
-                action.reasoning = f"fallback with {action.name}"
-            return action
-
-        chosen.reasoning = f"exploring with {chosen.name}"
-        self.last_action = chosen
-        return chosen
-
-    def _select_exploratory_action(
-        self, current_state: Optional[FrameHash], candidates: list[GameAction]
-    ) -> Optional[GameAction]:
         if current_state is None:
-            return self.rng.choice(candidates)
+            action = GameAction.RESET
+            action.reasoning = "no-state-reset"
+            self.last_action = None
+            return action
 
-        viable = [
-            action
-            for action in candidates
-            if not self._is_action_blocked(current_state, action)
-        ]
-        viable = [
-            action
-            for action in viable
-            if not self._is_action_known(current_state, action)
-        ]
+        available_actions = list(latest_frame.available_actions or [])
 
-        if not viable:
-            return None
-        candidates = viable
+        if self._level_start_state is None:
+            self._level_start_state = current_state
 
-        unknown_actions: list[GameAction] = []
-        scored_actions: list[tuple[int, GameAction]] = []
+        nfr_action = self._nfr_planner.next_action(
+            current_state=current_state,
+            available_actions=available_actions,
+            level_start_state=self._level_start_state,
+        )
+        if nfr_action is not None and nfr_action in self.ARROW_ACTIONS:
+            self.last_action = nfr_action
+        elif nfr_action is GameAction.RESET:
+            self.last_action = None
+        return nfr_action
 
-        for action in candidates:
-            key = (self.game_id, current_state, action)
-            target = self.state_transition_targets.get(key)
-            if target is None:
-                unknown_actions.append(action)
-                continue
-            visits = self.state_visit_counts.get(self.game_id, {}).get(target, 0)
-            scored_actions.append((visits, action))
-
-        if unknown_actions:
-            return self.rng.choice(unknown_actions)
-
-        if scored_actions:
-            min_total = min(total for total, _ in scored_actions)
-            best = [action for total, action in scored_actions if total == min_total]
-            return self.rng.choice(best)
-
-        return self.rng.choice(candidates)
-
-    def _choose_fallback_action(
-        self,
-        available_actions: list[GameAction],
-        current_state: Optional[FrameHash],
-    ) -> GameAction:
-        choices = list(available_actions)
-        if current_state is not None:
-            filtered = [
-                action
-                for action in choices
-                if action is GameAction.RESET
-                or not self._is_action_blocked(current_state, action)
-            ]
-            filtered = [
-                action
-                for action in filtered
-                if action is GameAction.RESET
-                or not self._is_action_known(current_state, action)
-            ]
-            if filtered:
-                choices = filtered
-            else:
-                return GameAction.RESET
-        return self.rng.choice(choices)
-
-    def _is_action_blocked(self, state_hash: FrameHash, action: GameAction) -> bool:
-        key = (self.game_id, state_hash, action)
-        target = self.state_transition_targets.get(key)
-        if target is None:
-            return False
-        return target == state_hash
-
-    def _is_action_known(self, state_hash: FrameHash, action: GameAction) -> bool:
-        key = (self.game_id, state_hash, action)
-        return key in self.state_transition_targets
 
     def _reset_tracking(self) -> None:
         self.last_action = None
@@ -234,6 +161,7 @@ class AbstractionNavigator(Agent):
         self.current_level = 0
         self.level_events = []
         self.last_snapshot = None
+        self._level_start_state = None
         self._last_score = 0
 
     def _observe(self, frame: FrameData) -> None:
@@ -241,9 +169,15 @@ class AbstractionNavigator(Agent):
             return
 
         grid = frame.frame[0]
-        frame_hash = self._hash_frame(grid)
+        energy_measurement = self._measure_energy_blocks(grid)
+        # Hash with HUD masked out (adversarial robustness: ignore score rendering)
+        frame_hash = self._hash_grid(grid)
         snapshot = FrameAbstraction(frame_hash=frame_hash, grid=grid)
-        context = {"frame": frame, "previous": self.last_snapshot}
+        context = {
+            "frame": frame,
+            "previous": self.last_snapshot,
+            "energy_measurement": energy_measurement,
+        }
         for builder in self.abstraction_builders:
             try:
                 builder(snapshot, context)
@@ -254,8 +188,19 @@ class AbstractionNavigator(Agent):
                     builder.__name__,
                 )
 
+        current_score = frame.score
+        level_changed = current_score != self._last_score
+        self._last_score = current_score
+        
+
+        if level_changed:
+            self._handle_level_change(snapshot, energy_measurement, current_score)
+        else:
+            snapshot.add("level", self.current_level)
+
         previous_state_hash = self.last_state_hash
         self._record_state_visit(frame_hash)
+        
         if (
             previous_state_hash is not None
             and self.last_action
@@ -265,11 +210,10 @@ class AbstractionNavigator(Agent):
 
         self.last_state_hash = frame_hash
         self.last_snapshot = snapshot
-        self._record_level_from_score(frame, snapshot)
 
     def cleanup(self, scorecard: Optional[Any] = None) -> None:
         states_visited_run = len(self.unique_states_this_run)
-        known_states_total = len(self.state_visit_counts.get(self.game_id, {}))
+        known_states_total = len(self.state_knowledge)
         logger.info(
             "%s states visited this run: %d (known total=%d)",
             self.game_id,
@@ -323,19 +267,11 @@ class AbstractionNavigator(Agent):
         with target_path.open("w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2)
 
-    def _load_knowledge(
-        self,
-    ) -> tuple[
-        dict[str, dict[int, int]],
-        dict[tuple[str, int, GameAction], int],
-    ]:
-        state_visits: dict[str, dict[int, int]] = {}
-        state_transitions: dict[
-            tuple[str, int, GameAction], int
-        ] = {}
+    def _load_knowledge(self) -> dict[FrameHash, StateKnowledge]:
+        knowledge: dict[FrameHash, StateKnowledge] = {}
 
         if not self.knowledge_path.exists():
-            return state_visits, state_transitions
+            return knowledge
 
         try:
             data = json.loads(self.knowledge_path.read_text())
@@ -345,85 +281,112 @@ class AbstractionNavigator(Agent):
                 self.game_id,
                 self.knowledge_path,
             )
-            return state_visits, state_transitions
+            return knowledge
 
-        states_section = data.get("states", {})
+        states_section = data.get("states")
         if isinstance(states_section, dict):
-            for game_id, info in states_section.items():
-                visit_counts = info.get("visit_counts")
-                if not isinstance(game_id, str) or not isinstance(visit_counts, dict):
+            for hash_str, info in states_section.items():
+                try:
+                    state_hash = FrameHash(int(hash_str))
+                except (TypeError, ValueError):
                     continue
-                visits: dict[int, int] = {}
-                for hash_str, count in visit_counts.items():
+                record = StateKnowledge()
+                if isinstance(info, dict):
+                    transitions = info.get("transitions", {})
+                    if isinstance(transitions, dict):
+                        for action_name, target_value in transitions.items():
+                            if action_name not in GameAction.__members__:
+                                continue
+                            try:
+                                target_hash = FrameHash(int(target_value))
+                            except (TypeError, ValueError):
+                                continue
+                            record.transitions[GameAction[action_name]] = target_hash
+                knowledge[state_hash] = record
+
+        if not knowledge:
+            # Backwards-compatibility: older layout with visit counts + transitions list
+            legacy_counts = data.get("visit_counts")
+            if isinstance(legacy_counts, dict):
+                for hash_str, count in legacy_counts.items():
                     try:
-                        visits[FrameHash(int(hash_str))] = int(count)
+                        state_hash = FrameHash(int(hash_str))
                     except (TypeError, ValueError):
                         continue
-                if visits:
-                    state_visits[game_id] = visits
+                    record = knowledge.setdefault(state_hash, StateKnowledge())
+            else:
+                states_group = data.get("states", {})
+                if isinstance(states_group, dict):
+                    info = states_group.get(self.game_id)
+                    if isinstance(info, dict):
+                        visit_counts = info.get("visit_counts", {})
+                        if isinstance(visit_counts, dict):
+                            for hash_str, count in visit_counts.items():
+                                try:
+                                    state_hash = FrameHash(int(hash_str))
+                                except (TypeError, ValueError):
+                                    continue
+                                record = knowledge.setdefault(
+                                    state_hash, StateKnowledge()
+                                )
 
-        transitions_section = data.get("state_transitions", [])
-        if isinstance(transitions_section, list):
-            for item in transitions_section:
-                if not isinstance(item, dict):
-                    continue
-                game_id = item.get("game_id")
-                source = item.get("source")
-                action_name = item.get("action")
-                if (
-                    not isinstance(game_id, str)
-                    or not isinstance(source, int)
-                    or not isinstance(action_name, str)
-                    or action_name not in GameAction.__members__
-                ):
-                    continue
-                action = GameAction[action_name]
-                source_hash = FrameHash(source)
-                target_value = item.get("target")
-                if isinstance(target_value, int):
-                    state_transitions[(game_id, source_hash, action)] = FrameHash(
-                        target_value
-                    )
-                    continue
-                targets_dict = item.get("targets")
-                if isinstance(targets_dict, dict) and targets_dict:
-                    try:
-                        target_hash_str, count = max(
-                            targets_dict.items(), key=lambda kv: kv[1]
-                        )
-                        target_hash = FrameHash(int(target_hash_str))
-                    except (TypeError, ValueError):
+            transitions_section = data.get("state_transitions", [])
+            if isinstance(transitions_section, list):
+                for item in transitions_section:
+                    if not isinstance(item, dict):
                         continue
-                    if len({k for k in targets_dict}) > 1:
-                        logger.warning(
-                            "%s non-deterministic transition observed for state=%s action=%s; using most frequent target",
-                            self.game_id,
-                            source_hash,
-                            action_name,
-                        )
-                    state_transitions[(game_id, source_hash, action)] = target_hash
+                    game_id = item.get("game_id")
+                    if game_id is not None and game_id != self.game_id:
+                        continue
+                    source = item.get("source")
+                    action_name = item.get("action")
+                    if (
+                        not isinstance(source, int)
+                        or not isinstance(action_name, str)
+                        or action_name not in GameAction.__members__
+                    ):
+                        continue
+                    action = GameAction[action_name]
+                    source_hash = FrameHash(source)
+                    record = knowledge.setdefault(source_hash, StateKnowledge())
+                    target_value = item.get("target")
+                    if isinstance(target_value, int):
+                        record.transitions[action] = FrameHash(target_value)
+                        knowledge.setdefault(record.transitions[action], StateKnowledge())
+                        continue
+                    targets_dict = item.get("targets")
+                    if isinstance(targets_dict, dict) and targets_dict:
+                        try:
+                            target_hash_str, count = max(
+                                targets_dict.items(), key=lambda kv: kv[1]
+                            )
+                            target_hash = FrameHash(int(target_hash_str))
+                        except (TypeError, ValueError):
+                            continue
+                        if len({k for k in targets_dict}) > 1:
+                            logger.warning(
+                                "%s non-deterministic transition observed for state=%s action=%s; using most frequent target",
+                                self.game_id,
+                                source_hash,
+                                action_name,
+                            )
+                        record.transitions[action] = target_hash
+                        knowledge.setdefault(target_hash, StateKnowledge())
 
-        return state_visits, state_transitions
+        return knowledge
 
     def _save_knowledge(self) -> None:
         self.knowledge_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "states": {
-                game_id: {
-                    "visit_counts": {str(state_hash): count for state_hash, count in visits.items()}
+                str(state_hash): {
+                    "transitions": {
+                        action.name: int(target)
+                        for action, target in record.transitions.items()
+                    },
                 }
-                for game_id, visits in self.state_visit_counts.items()
-                if visits
-            },
-            "state_transitions": [
-                {
-                    "game_id": game_id,
-                    "source": int(source_hash),
-                    "action": action.name,
-                    "target": int(target_hash),
-                }
-                for (game_id, source_hash, action), target_hash in self.state_transition_targets.items()
-            ],
+                for state_hash, record in self.state_knowledge.items()
+            }
         }
         self.knowledge_path.write_text(json.dumps(payload, indent=2))
         self._knowledge_dirty = False
@@ -431,10 +394,12 @@ class AbstractionNavigator(Agent):
     # --- State tracking ---------------------------------------------------
 
     def _record_state_visit(self, frame_hash: FrameHash) -> None:
-        visits = self.state_visit_counts.setdefault(self.game_id, {})
-        visits[frame_hash] = visits.get(frame_hash, 0) + 1
+        record = self.state_knowledge.get(frame_hash)
+        if record is None:
+            record = StateKnowledge()
+            self.state_knowledge[frame_hash] = record
+            self._knowledge_dirty = True
         self.unique_states_this_run.add(frame_hash)
-        self._knowledge_dirty = True
 
     def _record_state_transition(
         self,
@@ -442,20 +407,64 @@ class AbstractionNavigator(Agent):
         action: GameAction,
         next_hash: FrameHash,
     ) -> None:
-        key = (self.game_id, previous_hash, action)
-        existing = self.state_transition_targets.get(key)
+        source_record = self.state_knowledge.get(previous_hash)
+        if source_record is None:
+            source_record = StateKnowledge()
+            self.state_knowledge[previous_hash] = source_record
+            self._knowledge_dirty = True
+
+        if next_hash not in self.state_knowledge:
+            self.state_knowledge[next_hash] = StateKnowledge()
+            self._knowledge_dirty = True
+        existing = source_record.transitions.get(action)
         if existing is None:
-            self.state_transition_targets[key] = next_hash
+            source_record.transitions[action] = next_hash
             self._knowledge_dirty = True
             return
         if existing != next_hash:
             message = (
-                f"Non-deterministic transition for {self.game_id}: state={previous_hash}, "
+                f"Non-deterministic transition: state={previous_hash}, "
                 f"action={action.name}, existing_target={existing}, new_target={next_hash}"
             )
             logger.error(message)
             raise ValueError(message)
 
+    
+    # --- Hashing: HUD-masked grid hashing ---------------------------------
+    def _hash_grid(self, grid: list[list[Any]]) -> FrameHash:
+        """
+        Return a hash of the grid **ignoring HUD cells** if a HUD rect is present.
+        We treat HUD as adversarially chosen noise: masking it collapses states
+        that differ only by score rendering into a single identifier.
+        """
+        if not grid:
+            return FrameHash(0)
+        normalized = []
+        raw_y0, raw_y1, raw_x0, raw_x1 = self.ENERGY_HUD_RECT
+        max_y = len(grid) - 1
+        if max_y >= 0:
+            y0 = max(0, min(max_y, raw_y0))
+            y1 = max(0, min(max_y, raw_y1))
+        else:
+            y0 = y1 = 0
+        for y, row in enumerate(grid):
+            normalized_row = []
+            row_len = len(row)
+            if row_len > 0:
+                x0 = max(0, min(row_len - 1, raw_x0))
+                x1 = max(0, min(row_len - 1, raw_x1))
+            else:
+                x0 = 0
+                x1 = -1
+            for x, cell in enumerate(row):
+                if y0 <= y <= y1 and x0 <= x <= x1:
+                    normalized_row.append(0)
+                else:
+                    normalized_row.append(self._cell_value(cell))
+            normalized.append(tuple(normalized_row))
+        return FrameHash(hash(tuple(normalized)))
+
+    # --- NFR helpers: graph building and shortest paths --------------------
     @staticmethod
     def _hash_frame(grid: list[list[Any]]) -> FrameHash:
         if not grid:
@@ -477,6 +486,8 @@ class AbstractionNavigator(Agent):
 
     # === Game-specific abstractions (ls20) =================================
 
+    ENERGY_HUD_RECT = (1, 2, 2, 45)  # (y0, y1, x0, x1); tuned for ls20 energy bar
+
     def _register_game_abstractions(self) -> None:
         self.abstraction_builders.extend(
             [
@@ -495,54 +506,50 @@ class AbstractionNavigator(Agent):
     def _build_energy_abstraction(
         self, snapshot: FrameAbstraction, context: dict[str, Any]
     ) -> None:
-        measurement = self._measure_energy_blocks(snapshot.grid)
-        if measurement is None:
+        measurement = context.get("energy_measurement")
+        if not measurement:
             return
-        blocks_filled, capacity = measurement
+        blocks_filled, capacity, _ = measurement
+        if capacity:
+            self.energy_capacity = capacity
         snapshot.add(
             "energy",
             {
                 "blocks": blocks_filled,
-                # expose legacy field for downstream compatibility
-                "segments": blocks_filled,
                 "capacity": capacity,
             },
         )
 
-    def _record_level_from_score(
-        self, frame: FrameData, snapshot: FrameAbstraction
+    def _handle_level_change(
+        self,
+        snapshot: FrameAbstraction,
+        energy_measurement: Optional[tuple[int, int, tuple[int, int, int, int]]],
+        current_score: int,
     ) -> None:
-        current_score = frame.score
-        if current_score == self._last_score:
-            snapshot.add("level", self.current_level)
-            return
+        self.current_level = current_score
+        self._level_start_state = snapshot.frame_hash
 
-        previous_score = self._last_score
-        self._last_score = current_score
+        event: LevelEvent = {
+            "level": self.current_level,
+            "step": self.action_counter,
+            "state_hash": snapshot.frame_hash,
+            "energy": 0,
+            "timestamp": time.time(),
+        }
 
-        if current_score > previous_score:
-            self.current_level = current_score
-            energy_info = snapshot.get("energy") or {}
-            event: LevelEvent = {
-                "level": self.current_level,
-                "step": self.action_counter,
-                "state_hash": snapshot.frame_hash,
-                "energy": energy_info.get("blocks", 0),
-                "timestamp": time.time(),
-            }
-            self.level_events.append(event)
-            snapshot.add("level_transition", event)
-            logger.info(
-                "%s detected new level %d (score=%d) at step %d",
-                self.game_id,
-                self.current_level,
-                current_score,
-                self.action_counter,
-            )
-        else:
-            self.current_level = current_score
+        if energy_measurement:
+            blocks_filled, _, _ = energy_measurement
+            event["energy"] = blocks_filled
 
+        self.level_events.append(event)
+        snapshot.add("level_transition", event)
         snapshot.add("level", self.current_level)
+        logger.info(
+            "%s level advanced to %d at step %d",
+            self.game_id,
+            self.current_level,
+            self.action_counter,
+        )
 
     def _detect_player(self, grid: list[list[Any]]) -> Optional[dict[str, Any]]:
         positions: list[tuple[int, int]] = []
@@ -582,14 +589,19 @@ class AbstractionNavigator(Agent):
 
     def _measure_energy_blocks(
         self, grid: list[list[Any]]
-    ) -> Optional[tuple[int, int]]:
+    ) -> Optional[tuple[int, int, tuple[int, int, int, int]]]:
         row_index = 2
         if len(grid) <= row_index or not grid[row_index]:
             return None
         row = grid[row_index]
+        _, _, x0, x1 = self.ENERGY_HUD_RECT
+        row_len = len(row)
+        if row_len <= x0:
+            return None
+        upper_x = min(row_len - 1, x1)
 
         blocks: list[int] = []
-        for x in range(2, len(row), 2):
+        for x in range(x0, upper_x + 1, 2):
             value = self._cell_value(row[x])
             if value in (3, 15):
                 blocks.append(value)
@@ -598,13 +610,13 @@ class AbstractionNavigator(Agent):
 
         total = len(blocks)
         if total < 6:
-            values = {self._cell_value(row[x]) for x in range(2, len(row), 2)}
+            values = {self._cell_value(row[x]) for x in range(x0, upper_x + 1, 2)}
             if values == {8} and self.energy_capacity:
-                return 0, self.energy_capacity
+                return 0, self.energy_capacity, self.ENERGY_HUD_RECT
             return None
 
         if any(v not in (3, 15) for v in blocks):
             return None
 
         filled = sum(1 for v in blocks if v == 15)
-        return filled, total
+        return filled, total, self.ENERGY_HUD_RECT
