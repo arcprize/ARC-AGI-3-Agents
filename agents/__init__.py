@@ -9,7 +9,7 @@ from .templates.langgraph_functional_agent import LangGraphFunc, LangGraphTextOn
 from .templates.langgraph_random_agent import LangGraphRandom
 from .templates.langgraph_thinking import LangGraphThinking
 from .templates.llm_agents import LLM, FastLLM, GuidedLLM, ReasoningLLM
-from .templates.abstraction_navigator import AbstractionNavigator
+from .navigator.abstraction_navigator import AbstractionNavigator
 from .templates.random_agent import Random
 from .templates.reasoning_agent import ReasoningAgent
 from .templates.smolagents import SmolCodingAgent, SmolVisionAgent

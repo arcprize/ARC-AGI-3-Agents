@@ -76,7 +76,9 @@ class AbstractionNavigator(Agent):
         self.last_action: Optional[GameAction] = None
         self.last_state_hash: Optional[FrameHash] = None
 
-        self.knowledge_path = Path("agents/knowledge/random_blocks.json")
+        self.knowledge_path = (
+            Path(__file__).resolve().parent / "knowledge" / "random_blocks.json"
+        )
         self.state_knowledge: dict[FrameHash, StateKnowledge]
         self.state_knowledge = self._load_knowledge()
         self.unique_states_this_run: set[FrameHash] = set()

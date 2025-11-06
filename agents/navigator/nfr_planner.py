@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, NewType, Optional, Sequence, Tuple
@@ -10,6 +11,8 @@ from ..structs import GameAction
 
 
 FrameHash = NewType("FrameHash", int)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -72,6 +75,15 @@ class NearFrontierPlanner:
         if d_current <= 1 + d_reset:
             navigation = self._extract_path_actions(prev_c, current_state, target_state)
         else:
+            logger.info(
+                "nfr-reset decision: current=%s s0=%s target=%s d_current=%s d_reset=%s available=%s",
+                current_state,
+                s0,
+                target_state,
+                d_current,
+                d_reset,
+                [action.name for action in available_actions],
+            )
             action = GameAction.RESET
             action.reasoning = "nfr-reset"
             return action
