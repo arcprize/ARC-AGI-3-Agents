@@ -20,7 +20,8 @@ from typing import Any, Callable, Optional, TypedDict
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
-from .nfr_planner import FrameHash, NearFrontierPlanner, PlannerContext, STATE_GRAPH, TransitionMap
+from .nfr_planner import NearFrontierPlanner, PlannerContext
+from .types import FrameHash, Memory, STATE_GRAPH, TransitionMap
 
 logger = logging.getLogger()
 
@@ -70,40 +71,6 @@ class NavigatorSnapshot:
     energy_capacity: Optional[int]
     available_actions: tuple[GameAction, ...]
     game_state: GameState
-
-
-@dataclass
-class Memory:
-    """Persistent navigation memories retained across runs."""
-
-    state_graph: STATE_GRAPH = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, dict[str, int]]:
-        return {
-            str(state_hash): {"transitions": transition_map.to_dict()}
-            for state_hash, transition_map in self.state_graph.items()
-        }
-
-    @classmethod
-    def from_dict(cls, payload: dict[str, dict[str, int]]) -> Memory:
-        memory = cls()
-        for hash_str, info in payload.items():
-            try:
-                state_hash = FrameHash(int(hash_str))
-            except (TypeError, ValueError):
-                logger.warning("Skipping invalid state id in memory payload: %s", hash_str)
-                continue
-            transitions = (
-                info.get("transitions") if isinstance(info, dict) else None
-            )
-            if not isinstance(transitions, dict):
-                logger.warning(
-                    "Skipping state %s because transitions map is missing or malformed",
-                    hash_str,
-                )
-                continue
-            memory.state_graph[state_hash] = TransitionMap.from_dict(transitions)
-        return memory
 
 
 class AbstractionNavigator(Agent):
@@ -202,15 +169,6 @@ class AbstractionNavigator(Agent):
             self.last_action = nfr_action
         elif nfr_action is GameAction.RESET:
             self.last_action = None
-        logger.info(
-            "%s planner_step: state=%s level_start=%s action=%s reason=%s available=%s",
-            self.game_id,
-            current_state,
-            self._level_start_state,
-            nfr_action.name if nfr_action else None,
-            getattr(nfr_action, "reasoning", None) if nfr_action else None,
-            [action.name for action in available_actions],
-        )
         return nfr_action
 
 

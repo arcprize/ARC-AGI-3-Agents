@@ -4,44 +4,14 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Mapping, NewType, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..structs import GameAction
+from .types import FrameHash, STATE_GRAPH, TransitionMap
 
-
-FrameHash = NewType("FrameHash", int)
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class TransitionMap:
-    transitions: Dict[GameAction, FrameHash] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, int]:
-        return {action.name: int(target) for action, target in self.transitions.items()}
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, int]) -> TransitionMap:
-        transitions: Dict[GameAction, FrameHash] = {}
-        for action_name, raw in payload.items():
-            if action_name not in GameAction.__members__:
-                logger.warning("Skipping unknown action in memory payload: %s", action_name)
-                continue
-            try:
-                transitions[GameAction[action_name]] = FrameHash(int(raw))
-            except (TypeError, ValueError):
-                logger.warning(
-                    "Skipping transition for action %s due to invalid target %s",
-                    action_name,
-                    raw,
-                )
-                continue
-        return cls(transitions)
-
-
-STATE_GRAPH = NewType("STATE_GRAPH", Dict[FrameHash, TransitionMap])
 
 @dataclass
 class PlannerContext:
