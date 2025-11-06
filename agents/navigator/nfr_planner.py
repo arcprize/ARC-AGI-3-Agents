@@ -16,16 +16,18 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class StateKnowledge:
+class TransitionMap:
     transitions: Dict[GameAction, FrameHash] = field(default_factory=dict)
 
+
+STATE_GRAPH = NewType("STATE_GRAPH", Dict[FrameHash, TransitionMap])
 
 @dataclass
 class PlannerContext:
     """Lightweight view of the navigator knowledge for a single game."""
 
     arrow_actions: Sequence[GameAction]
-    state_knowledge: Dict[FrameHash, StateKnowledge]
+    state_graph: STATE_GRAPH
 
 
 class NearFrontierPlanner:
@@ -33,7 +35,7 @@ class NearFrontierPlanner:
 
     def __init__(self, context: PlannerContext) -> None:
         self._context = context
-        self._knowledge = context.state_knowledge
+        self._state_graph = context.state_graph
 
     def next_action(
         self,
@@ -106,15 +108,15 @@ class NearFrontierPlanner:
         return None
 
     def _discovered_states(self) -> set[FrameHash]:
-        states: set[FrameHash] = set(self._knowledge.keys())
-        for record in self._knowledge.values():
-            states.update(record.transitions.values())
+        states: set[FrameHash] = set(self._state_graph.keys())
+        for transition_map in self._state_graph.values():
+            states.update(transition_map.transitions.values())
         return states
 
     def _build_adj(self) -> Dict[FrameHash, List[Tuple[FrameHash, GameAction]]]:
         adjacency: Dict[FrameHash, List[Tuple[FrameHash, GameAction]]] = {}
-        for state, record in self._knowledge.items():
-            for action, target in record.transitions.items():
+        for state, transition_map in self._state_graph.items():
+            for action, target in transition_map.transitions.items():
                 if action not in self._context.arrow_actions:
                     continue
                 adjacency.setdefault(state, []).append((target, action))
@@ -164,7 +166,7 @@ class NearFrontierPlanner:
                     break
 
     def _is_action_known(self, state: FrameHash, action: GameAction) -> bool:
-        record = self._knowledge.get(state)
-        if record is None:
+        transition_map = self._state_graph.get(state)
+        if transition_map is None:
             return False
-        return action in record.transitions
+        return action in transition_map.transitions

@@ -18,9 +18,11 @@ from typing import Any, Callable, Optional, TypedDict
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
-from .nfr_planner import FrameHash, NearFrontierPlanner, PlannerContext, StateKnowledge
+from .nfr_planner import FrameHash, NearFrontierPlanner, PlannerContext, STATE_GRAPH, TransitionMap
 
 logger = logging.getLogger()
+
+MEMORY_PATH = Path(__file__).resolve().parent / "memory" / "state_graph.json"
 
 # === Generic infrastructure ==================================================
 
@@ -68,6 +70,13 @@ class NavigatorSnapshot:
     game_state: GameState
 
 
+@dataclass
+class Memory:
+    """Persistent navigation memories retained across runs."""
+
+    state_graph: STATE_GRAPH = field(default_factory=dict)
+
+
 class AbstractionNavigator(Agent):
     """Exploration-focused agent that will grow into an abstraction navigator."""
 
@@ -89,15 +98,11 @@ class AbstractionNavigator(Agent):
         self.rng = random.Random(seed)
         self.last_action: Optional[GameAction] = None
 
-        self.knowledge_path = (
-            Path(__file__).resolve().parent / "knowledge" / "random_blocks.json"
-        )
-        self.state_knowledge: dict[FrameHash, StateKnowledge]
-        self.state_knowledge = self._load_knowledge()
+        self.memory: Memory = self._load_memory()
         self.unique_states_this_run: set[FrameHash] = set()
         planner_context = PlannerContext(
             arrow_actions=self.ARROW_ACTIONS,
-            state_knowledge=self.state_knowledge,
+            state_graph=self.memory.state_graph,
         )
         self._nfr_planner = NearFrontierPlanner(planner_context)
         self._snapshot: Optional[NavigatorSnapshot] = None
@@ -109,7 +114,6 @@ class AbstractionNavigator(Agent):
         self.current_level = 0
         self.level_events: list[LevelEvent] = []
 
-        self._knowledge_dirty = False
         self.abstraction_builders: list[
             Callable[[FrameAbstraction, dict[str, Any]], None]
         ] = []
@@ -283,7 +287,7 @@ class AbstractionNavigator(Agent):
 
     def cleanup(self, scorecard: Optional[Any] = None) -> None:
         states_visited_run = len(self.unique_states_this_run)
-        known_states_total = len(self.state_knowledge)
+        known_states_total = len(self.memory.state_graph)
         logger.info(
             "%s states visited this run: %d (known total=%d)",
             self.game_id,
@@ -298,8 +302,7 @@ class AbstractionNavigator(Agent):
                 self.level_events,
             )
 
-        if self._knowledge_dirty:
-            self._save_knowledge()
+        self._save_memory()
 
         self._persist_metrics(
             states_visited_run=states_visited_run,
@@ -337,21 +340,21 @@ class AbstractionNavigator(Agent):
         with target_path.open("w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2)
 
-    def _load_knowledge(self) -> dict[FrameHash, StateKnowledge]:
-        knowledge: dict[FrameHash, StateKnowledge] = {}
-
-        if not self.knowledge_path.exists():
-            return knowledge
+    def _load_memory(self) -> Memory:
+        memory = Memory()
+        state_graph = memory.state_graph
+        if not MEMORY_PATH.exists():
+            return memory
 
         try:
-            data = json.loads(self.knowledge_path.read_text())
+            data = json.loads(MEMORY_PATH.read_text())
         except (json.JSONDecodeError, OSError):
             logger.warning(
                 "%s could not load knowledge file %s; starting fresh",
                 self.game_id,
-                self.knowledge_path,
+                MEMORY_PATH,
             )
-            return knowledge
+            return memory
 
         states_section = data.get("states")
         if isinstance(states_section, dict):
@@ -360,7 +363,7 @@ class AbstractionNavigator(Agent):
                     state_hash = FrameHash(int(hash_str))
                 except (TypeError, ValueError):
                     continue
-                record = StateKnowledge()
+                transition_map = TransitionMap()
                 if isinstance(info, dict):
                     transitions = info.get("transitions", {})
                     if isinstance(transitions, dict):
@@ -371,10 +374,10 @@ class AbstractionNavigator(Agent):
                                 target_hash = FrameHash(int(target_value))
                             except (TypeError, ValueError):
                                 continue
-                            record.transitions[GameAction[action_name]] = target_hash
-                knowledge[state_hash] = record
+                            transition_map.transitions[GameAction[action_name]] = target_hash
+                state_graph[state_hash] = transition_map
 
-        if not knowledge:
+        if not state_graph:
             # Backwards-compatibility: older layout with visit counts + transitions list
             legacy_counts = data.get("visit_counts")
             if isinstance(legacy_counts, dict):
@@ -383,7 +386,7 @@ class AbstractionNavigator(Agent):
                         state_hash = FrameHash(int(hash_str))
                     except (TypeError, ValueError):
                         continue
-                    record = knowledge.setdefault(state_hash, StateKnowledge())
+                    transition_map = state_graph.setdefault(state_hash, TransitionMap())
             else:
                 states_group = data.get("states", {})
                 if isinstance(states_group, dict):
@@ -396,8 +399,8 @@ class AbstractionNavigator(Agent):
                                     state_hash = FrameHash(int(hash_str))
                                 except (TypeError, ValueError):
                                     continue
-                                record = knowledge.setdefault(
-                                    state_hash, StateKnowledge()
+                                transition_map = state_graph.setdefault(
+                                    state_hash, TransitionMap()
                                 )
 
             transitions_section = data.get("state_transitions", [])
@@ -418,11 +421,11 @@ class AbstractionNavigator(Agent):
                         continue
                     action = GameAction[action_name]
                     source_hash = FrameHash(source)
-                    record = knowledge.setdefault(source_hash, StateKnowledge())
+                    transition_map = state_graph.setdefault(source_hash, TransitionMap())
                     target_value = item.get("target")
                     if isinstance(target_value, int):
-                        record.transitions[action] = FrameHash(target_value)
-                        knowledge.setdefault(record.transitions[action], StateKnowledge())
+                        transition_map.transitions[action] = FrameHash(target_value)
+                        state_graph.setdefault(transition_map.transitions[action], TransitionMap())
                         continue
                     targets_dict = item.get("targets")
                     if isinstance(targets_dict, dict) and targets_dict:
@@ -440,13 +443,13 @@ class AbstractionNavigator(Agent):
                                 source_hash,
                                 action_name,
                             )
-                        record.transitions[action] = target_hash
-                        knowledge.setdefault(target_hash, StateKnowledge())
+                        transition_map.transitions[action] = target_hash
+                        state_graph.setdefault(target_hash, TransitionMap())
 
-        return knowledge
+        return memory
 
-    def _save_knowledge(self) -> None:
-        self.knowledge_path.parent.mkdir(parents=True, exist_ok=True)
+    def _save_memory(self) -> None:
+        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "states": {
                 str(state_hash): {
@@ -455,20 +458,19 @@ class AbstractionNavigator(Agent):
                         for action, target in record.transitions.items()
                     },
                 }
-                for state_hash, record in self.state_knowledge.items()
+                for state_hash, record in self.memory.state_graph.items()
             }
         }
-        self.knowledge_path.write_text(json.dumps(payload, indent=2))
-        self._knowledge_dirty = False
+        MEMORY_PATH.write_text(json.dumps(payload, indent=2))
 
     # --- State tracking ---------------------------------------------------
 
     def _record_state_visit(self, frame_hash: FrameHash) -> None:
-        record = self.state_knowledge.get(frame_hash)
+        state_graph = self.memory.state_graph
+        record = state_graph.get(frame_hash)
         if record is None:
-            record = StateKnowledge()
-            self.state_knowledge[frame_hash] = record
-            self._knowledge_dirty = True
+            record = TransitionMap()
+            state_graph[frame_hash] = record
         self.unique_states_this_run.add(frame_hash)
 
     def _record_state_transition(
@@ -477,19 +479,17 @@ class AbstractionNavigator(Agent):
         action: GameAction,
         next_hash: FrameHash,
     ) -> None:
-        source_record = self.state_knowledge.get(previous_hash)
-        if source_record is None:
-            source_record = StateKnowledge()
-            self.state_knowledge[previous_hash] = source_record
-            self._knowledge_dirty = True
+        state_graph = self.memory.state_graph
+        transition_map = state_graph.get(previous_hash)
+        if transition_map is None:
+            transition_map = TransitionMap()
+            state_graph[previous_hash] = transition_map
 
-        if next_hash not in self.state_knowledge:
-            self.state_knowledge[next_hash] = StateKnowledge()
-            self._knowledge_dirty = True
-        existing = source_record.transitions.get(action)
+        if next_hash not in state_graph:
+            state_graph[next_hash] = TransitionMap()
+        existing = transition_map.transitions.get(action)
         if existing is None:
-            source_record.transitions[action] = next_hash
-            self._knowledge_dirty = True
+            transition_map.transitions[action] = next_hash
             return
         if existing != next_hash:
             message = (
