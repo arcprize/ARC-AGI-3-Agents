@@ -13,20 +13,12 @@ from .types import FrameHash, STATE_GRAPH, TransitionMap
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class PlannerContext:
-    """Lightweight view of the navigator knowledge for a single game."""
-
-    arrow_actions: Sequence[GameAction]
-    state_graph: STATE_GRAPH
-
-
 class NearFrontierPlanner:
     """Compute plans that minimise distance to the nearest unexplored frontier."""
 
-    def __init__(self, context: PlannerContext) -> None:
-        self._context = context
-        self._state_graph = context.state_graph
+    def __init__(self, arrow_actions: Sequence[GameAction], state_graph: STATE_GRAPH) -> None:
+        self._arrow_actions = arrow_actions
+        self._state_graph = state_graph
 
     def next_action(
         self,
@@ -88,7 +80,7 @@ class NearFrontierPlanner:
             return action
 
         # Already at the chosen frontier: probe the first unseen action that is available.
-        for action in self._context.arrow_actions:
+        for action in self._arrow_actions:
             if action not in available_set:
                 continue
             if self._is_action_known(current_state, action):
@@ -108,7 +100,7 @@ class NearFrontierPlanner:
         adjacency: Dict[FrameHash, List[Tuple[FrameHash, GameAction]]] = {}
         for state, transition_map in self._state_graph.items():
             for action, target in transition_map.transitions.items():
-                if action not in self._context.arrow_actions:
+                if action not in self._arrow_actions:
                     continue
                 adjacency.setdefault(state, []).append((target, action))
         return adjacency
@@ -151,7 +143,7 @@ class NearFrontierPlanner:
 
     def _frontier_states(self) -> Iterable[FrameHash]:
         for state in self._discovered_states():
-            for action in self._context.arrow_actions:
+            for action in self._arrow_actions:
                 if not self._is_action_known(state, action):
                     yield state
                     break

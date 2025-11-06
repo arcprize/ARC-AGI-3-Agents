@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional, TypedDict
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
-from .nfr_planner import NearFrontierPlanner, PlannerContext
+from .nfr_planner import NearFrontierPlanner
 from .types import FrameHash, Memory, STATE_GRAPH, TransitionMap
 
 logger = logging.getLogger()
@@ -96,11 +96,10 @@ class AbstractionNavigator(Agent):
 
         self.memory: Memory = self._load_memory()
         self.unique_states_this_run: set[FrameHash] = set()
-        planner_context = PlannerContext(
+        self._nfr_planner = NearFrontierPlanner(
             arrow_actions=self.ARROW_ACTIONS,
             state_graph=self.memory.state_graph,
         )
-        self._nfr_planner = NearFrontierPlanner(planner_context)
         self._snapshot: Optional[NavigatorSnapshot] = None
         self._prev_snapshot: Optional[NavigatorSnapshot] = None
         self._pending_level_score: Optional[int] = None
