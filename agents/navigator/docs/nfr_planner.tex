@@ -1,0 +1,66 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath, amssymb}
+\usepackage{geometry}
+\geometry{margin=1in}
+
+\title{Near-Frontier with Reset (NFR) Planner: Formal Overview}
+\author{ARC-AGI Abstraction Navigator Notes}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Problem Setting}
+
+Let $\mathcal{G} = (S, A, T)$ denote the agent interaction graph. States $s \in S$ encode masked ARC frames, actions $a \in A$ are constrained to the four arrows, and $T : S \times A \to S \cup \{\bot\}$ is the partial transition function estimated from experience ($\bot$ indicates an unknown successor).
+
+Each play starts at a known level start state $s_0 \in S$. The planner is given:
+\begin{itemize}
+    \item $S_{\mathrm{disc}} \subseteq S$: discovered states from prior episodes.
+    \item $T_{\mathrm{known}} : S_{\mathrm{disc}} \times A \to S_{\mathrm{disc}} \cup \{\bot\}$: the partial transition map recovered from experience (returning $\bot$ when a transition has not yet been seen).
+    \item $A(s) \subseteq A$: actions the environment currently allows at state $s$.
+    \item $\mathcal{F} = \{s \in S_{\mathrm{disc}} \mid \exists a \in A(s) : T_{\mathrm{known}}(s,a) = \bot\}$, the \emph{frontier} states whose outgoing edges are incompletely observed.
+\end{itemize}
+
+During an episode the agent sits in state $s_t$ with available actions $A_t = A(s_t)$. The planner must output $a_t \in A_t \cup \{\mathrm{RESET}\}$ to minimise the distance to a frontier while optionally using reset jumps to $s_0$.
+
+\section{High-Level Algorithm}
+
+We formalise the planner as follows:
+\begin{align}
+\label{eq:bfs-current}
+D_t^{c}, P_t^{c} &= \mathrm{BFS}(\mathcal{G}_t, s_t),\\
+\label{eq:bfs-reset}
+D_t^{0}, P_t^{0} &= \mathrm{BFS}(\mathcal{G}_t, s_0),
+\end{align}
+where $\mathcal{G}_t = (S_{\mathrm{disc}}, A, T_{\mathrm{known}})$ is the known subgraph. The superscript $c$ records quantities measured from the \emph{current} state $c \equiv s_t$, while $0$ denotes measurements from the reset state $s_0$. The maps $D$ store shortest-path lengths, and $P$ store predecessors and the first action on the path.
+
+For each frontier $f \in \mathcal{F}$, define the \emph{reset-augmented cost}:
+\begin{equation}
+\label{eq:cost}
+J(f) = \min\{ D_t^{c}(f), 1 + D_t^{0}(f) \}.
+\end{equation}
+Let $f^\star$ be the minimiser of $J$, breaking ties by smaller $D_t^{(0)}(f)$ and then lexicographically by state identifier.
+
+The planner returns:
+\begin{equation}
+a_t =
+\begin{cases}
+\mathrm{first\_action}(P_t^{c}, s_t, f^\star), & \text{if } D_t^{c}(f^\star) \leq 1 + D_t^{0}(f^\star),\\
+\mathrm{RESET}, & \text{otherwise}.
+\end{cases}
+\end{equation}
+
+If the navigation policy yields an empty plan (i.e.\ $s_t = f^\star$ or the path is undefined), the agent probes the first $a \in A_t$ such that $T_{\mathrm{known}}(s_t, a) = \bot$.
+
+\section{Desirable Properties}
+
+\paragraph{Completeness on the Known Subgraph.} As long as $\mathcal{G}_t$ is connected between $s_t$ and all frontiers, $\mathrm{BFS}$ ensures $D_t^{c}(f)$ equals the true shortest distance in $\mathcal{G}_t$. Therefore the navigation step reaches $f^\star$ in minimal steps without reset.
+
+\paragraph{Reset Optimality.} The cost \eqref{eq:cost} chooses between continuing from $s_t$ or incurring one reset plus the path from $s_0$. This is optimal under the assumption that resetting teleports to $s_0$ in one step and costs a unit time penalty.
+
+\paragraph{Frontier Prioritisation.} Any frontier with strictly smaller $J(f)$ than all others will eventually be chosen. If exploration uncovers new edges, $J$ automatically updates without retuning.
+
+\paragraph{Idempotence of Known Actions.} The planner never replays an action whose successor is already in $T_{\mathrm{known}}(s_t, a)$ when probing frontiers; thus exploration focuses on unknown transitions.
+
+\end{document}
