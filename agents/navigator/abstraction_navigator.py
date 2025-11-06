@@ -54,6 +54,20 @@ class FrameAbstraction:
         return self.abstractions.get(name)
 
 
+@dataclass(frozen=True)
+class NavigatorSnapshot:
+    """Immutable view of a single observation step."""
+
+    frame: FrameData
+    abstraction: FrameAbstraction
+    frame_hash: FrameHash
+    score: int
+    energy_blocks: Optional[int]
+    energy_capacity: Optional[int]
+    available_actions: tuple[GameAction, ...]
+    game_state: GameState
+
+
 class AbstractionNavigator(Agent):
     """Exploration-focused agent that will grow into an abstraction navigator."""
 
@@ -74,7 +88,6 @@ class AbstractionNavigator(Agent):
         seed = int(time.time() * 1_000_000) ^ hash(self.game_id)
         self.rng = random.Random(seed)
         self.last_action: Optional[GameAction] = None
-        self.last_state_hash: Optional[FrameHash] = None
 
         self.knowledge_path = (
             Path(__file__).resolve().parent / "knowledge" / "random_blocks.json"
@@ -87,13 +100,14 @@ class AbstractionNavigator(Agent):
             state_knowledge=self.state_knowledge,
         )
         self._nfr_planner = NearFrontierPlanner(planner_context)
-        self._pending_level_start = False
-        self._level_transition_hash: Optional[FrameHash] = None
+        self._snapshot: Optional[NavigatorSnapshot] = None
+        self._prev_snapshot: Optional[NavigatorSnapshot] = None
+        self._pending_level_score: Optional[int] = None
+        self._pending_level_hash: Optional[FrameHash] = None
 
         self.energy_capacity: Optional[int] = None
         self.current_level = 0
         self.level_events: list[LevelEvent] = []
-        self._last_score: int = 0
 
         self._knowledge_dirty = False
         self.abstraction_builders: list[
@@ -133,14 +147,15 @@ class AbstractionNavigator(Agent):
         # Observe and update discovered graph / level / HUD
         self._observe(latest_frame)
 
-        current_state = self.last_state_hash
-        if current_state is None:
+        snapshot = self._snapshot
+        if snapshot is None:
             action = GameAction.RESET
             action.reasoning = "no-state-reset"
             self.last_action = None
             return action
 
-        available_actions = list(latest_frame.available_actions or [])
+        current_state = snapshot.frame_hash
+        available_actions = list(snapshot.available_actions)
 
         if self._level_start_state is None:
             self._level_start_state = current_state
@@ -154,31 +169,41 @@ class AbstractionNavigator(Agent):
             self.last_action = nfr_action
         elif nfr_action is GameAction.RESET:
             self.last_action = None
+        logger.info(
+            "%s planner_step: state=%s level_start=%s action=%s reason=%s available=%s",
+            self.game_id,
+            current_state,
+            self._level_start_state,
+            nfr_action.name if nfr_action else None,
+            getattr(nfr_action, "reasoning", None) if nfr_action else None,
+            [action.name for action in available_actions],
+        )
         return nfr_action
 
 
     def _reset_tracking(self) -> None:
         self.last_action = None
-        self.last_state_hash = None
         self.unique_states_this_run.clear()
         self.energy_capacity = None
         self.current_level = 0
         self.level_events = []
         self.last_snapshot = None
         self._level_start_state = None
-        self._last_score = 0
-        self._pending_level_start = False
-        self._level_transition_hash = None
+        self._snapshot = None
+        self._prev_snapshot = None
+        self._pending_level_score = None
+        self._pending_level_hash = None
 
     def _observe(self, frame: FrameData) -> None:
         if frame.is_empty() or not frame.frame:
             return
 
+        prev_snapshot = self._snapshot
+
         grid = frame.frame[0]
         energy_measurement = self._measure_energy_blocks(grid)
-        # Hash with HUD masked out (adversarial robustness: ignore score rendering)
         frame_hash = self._hash_grid(grid)
-        snapshot = FrameAbstraction(frame_hash=frame_hash, grid=grid)
+        abstraction = FrameAbstraction(frame_hash=frame_hash, grid=grid)
         context = {
             "frame": frame,
             "previous": self.last_snapshot,
@@ -186,7 +211,7 @@ class AbstractionNavigator(Agent):
         }
         for builder in self.abstraction_builders:
             try:
-                builder(snapshot, context)
+                builder(abstraction, context)
             except Exception:
                 logger.exception(
                     "%s abstraction builder %s failed",
@@ -194,34 +219,67 @@ class AbstractionNavigator(Agent):
                     builder.__name__,
                 )
 
-        current_score = frame.score
-        level_changed = current_score != self._last_score
-        self._last_score = current_score
+        energy_blocks = None
+        if energy_measurement:
+            energy_blocks, capacity, _ = energy_measurement
+            if capacity:
+                self.energy_capacity = capacity
 
-        if self._pending_level_start and self._level_transition_hash != frame_hash:
-            self._level_start_state = frame_hash
-            self._pending_level_start = False
-            self._level_transition_hash = None
-            logger.info("%s level start confirmed at hash=%s", self.game_id, frame_hash)
-        
+        snapshot = NavigatorSnapshot(
+            frame=frame,
+            abstraction=abstraction,
+            frame_hash=frame_hash,
+            score=frame.score,
+            energy_blocks=energy_blocks,
+            energy_capacity=self.energy_capacity,
+            available_actions=tuple(frame.available_actions or ()),
+            game_state=frame.state,
+        )
+
+        self._prev_snapshot = prev_snapshot
+        self._snapshot = snapshot
+        self.last_snapshot = abstraction
+
+        if self._level_start_state is None:
+            self._level_start_state = snapshot.frame_hash
+
+        level_changed = (
+            prev_snapshot is not None and snapshot.score != prev_snapshot.score
+        )
 
         if level_changed:
-            self._handle_level_change(snapshot, energy_measurement, current_score)
-        else:
-            snapshot.add("level", self.current_level)
+            self._handle_level_change(snapshot)
+        elif (
+            self._pending_level_score is not None
+            and snapshot.score == self._pending_level_score
+            and snapshot.frame_hash != self._pending_level_hash
+        ):
+            self._level_start_state = snapshot.frame_hash
+            self._pending_level_score = None
+            self._pending_level_hash = None
+            logger.info("%s level start confirmed at hash=%s", self.game_id, frame_hash)
+        elif (
+            self._pending_level_score is not None
+            and snapshot.score != self._pending_level_score
+        ):
+            # Score shifted again before confirmation; drop the pending record.
+            self._pending_level_score = None
+            self._pending_level_hash = None
 
-        previous_state_hash = self.last_state_hash
-        self._record_state_visit(frame_hash)
-        
+        abstraction.add("level", snapshot.score)
+        self.current_level = snapshot.score
+
+        self._record_state_visit(snapshot.frame_hash)
+
+        previous_state_hash = prev_snapshot.frame_hash if prev_snapshot else None
         if (
             previous_state_hash is not None
             and self.last_action
             and self.last_action is not GameAction.RESET
         ):
-            self._record_state_transition(previous_state_hash, self.last_action, frame_hash)
-
-        self.last_state_hash = frame_hash
-        self.last_snapshot = snapshot
+            self._record_state_transition(
+                previous_state_hash, self.last_action, snapshot.frame_hash
+            )
 
     def cleanup(self, scorecard: Optional[Any] = None) -> None:
         states_visited_run = len(self.unique_states_this_run)
@@ -532,15 +590,10 @@ class AbstractionNavigator(Agent):
             },
         )
 
-    def _handle_level_change(
-        self,
-        snapshot: FrameAbstraction,
-        energy_measurement: Optional[tuple[int, int, tuple[int, int, int, int]]],
-        current_score: int,
-    ) -> None:
-        self.current_level = current_score
-        self._pending_level_start = True
-        self._level_transition_hash = snapshot.frame_hash
+    def _handle_level_change(self, snapshot: NavigatorSnapshot) -> None:
+        self.current_level = snapshot.score
+        self._pending_level_score = snapshot.score
+        self._pending_level_hash = snapshot.frame_hash
 
         event: LevelEvent = {
             "level": self.current_level,
@@ -550,13 +603,11 @@ class AbstractionNavigator(Agent):
             "timestamp": time.time(),
         }
 
-        if energy_measurement:
-            blocks_filled, _, _ = energy_measurement
-            event["energy"] = blocks_filled
+        if snapshot.energy_blocks is not None:
+            event["energy"] = snapshot.energy_blocks
 
         self.level_events.append(event)
-        snapshot.add("level_transition", event)
-        snapshot.add("level", self.current_level)
+        snapshot.abstraction.add("level_transition", event)
         logger.info(
             "%s level advanced to %d at step %d",
             self.game_id,
