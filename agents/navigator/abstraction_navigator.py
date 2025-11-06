@@ -70,7 +70,6 @@ class NavigatorSnapshot:
     energy_blocks: Optional[int]
     energy_capacity: Optional[int]
     available_actions: tuple[GameAction, ...]
-    game_state: GameState
 
 
 class AbstractionNavigator(Agent):
@@ -229,7 +228,6 @@ class AbstractionNavigator(Agent):
             energy_blocks=energy_blocks,
             energy_capacity=self.energy_capacity,
             available_actions=tuple(frame.available_actions or ()),
-            game_state=frame.state,
         )
 
         self._prev_snapshot = prev_snapshot
