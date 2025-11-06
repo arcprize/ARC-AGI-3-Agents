@@ -69,7 +69,6 @@ class NavigatorSnapshot:
     score: int
     energy_blocks: Optional[int]
     energy_capacity: Optional[int]
-    available_actions: tuple[GameAction, ...]
 
 
 class AbstractionNavigator(Agent):
@@ -153,7 +152,7 @@ class AbstractionNavigator(Agent):
             return action
 
         current_state = snapshot.frame_hash
-        available_actions = list(snapshot.available_actions)
+        available_actions = list(snapshot.frame.available_actions)
 
         if self._level_start_state is None:
             self._level_start_state = current_state
@@ -227,7 +226,6 @@ class AbstractionNavigator(Agent):
             score=frame.score,
             energy_blocks=energy_blocks,
             energy_capacity=self.energy_capacity,
-            available_actions=tuple(frame.available_actions or ()),
         )
 
         self._prev_snapshot = prev_snapshot
