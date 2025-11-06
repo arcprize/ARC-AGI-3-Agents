@@ -9,12 +9,13 @@ dependencies = [
     "langchain[openai]>=0.3.27",
     "langgraph>=0.6.3",
     "langgraph-checkpoint-sqlite>=2.0.11",
+    "mypy>=1.17.1",
     "numpy>=2.3.2",
     "openai==1.72.0",
     "pillow>=11.2.1",
     "pydantic>=2.11.7",
     "requests>=2.32.4",
-    "smolagents>=1.20.0"
+    "smolagents>=1.20.0",
 ]
 
 [dependency-groups]
@@ -37,9 +38,16 @@ strict = true
 disallow_untyped_defs = true
 exclude = [
     "tests",
+    "agents/templates",
+    "agents/__init__.py",
+    "agents/agent.py",
+    "agents/recorder.py",
+    "agents/structs.py",
+    "agents/swarm.py",
+    "agents/tracing.py",
+    "main.py",
 ]
 plugins = []
-files = ["agents/navigator"]
 follow_imports = "skip"
 
 [[tool.mypy.overrides]]
