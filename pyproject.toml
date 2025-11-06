@@ -39,6 +39,12 @@ exclude = [
     "tests",
 ]
 plugins = []
+files = ["agents/navigator"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["requests", "requests.*", "agentops"]
+ignore_missing_imports = true
 
 [tool.ruff.lint]
 extend-select = ["I"]
