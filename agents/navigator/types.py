@@ -51,23 +51,17 @@ class Memory:
     state_graph: STATE_GRAPH = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Dict[str, int]]:
-        return {
-            str(state_hash): {"transitions": record.to_dict()}
-            for state_hash, record in self.state_graph.items()
-        }
+        return {str(state_hash): record.to_dict() for state_hash, record in self.state_graph.items()}
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Mapping[str, int]]) -> "Memory":
         memory = cls()
-        for hash_str, info in payload.items():
+        for hash_str, transitions in payload.items():
             try:
                 state_hash = FrameHash(int(hash_str))
             except (TypeError, ValueError):
                 logger.warning("Skipping invalid state id in memory payload: %s", hash_str)
                 continue
-            transitions = (
-                info.get("transitions") if isinstance(info, Mapping) else None
-            )
             if not isinstance(transitions, Mapping):
                 logger.warning(
                     "Skipping state %s because transitions map is missing or malformed",

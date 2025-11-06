@@ -164,7 +164,13 @@ class AbstractionNavigator(Agent):
             available_actions=available_actions,
             level_start_state=self._level_start_state,
         )
-        if nfr_action is not None and nfr_action in self.ARROW_ACTIONS:
+        if nfr_action is None:
+            action = GameAction.RESET
+            action.reasoning = "nfr-fallback-reset"
+            self.last_action = None
+            return action
+
+        if nfr_action in self.ARROW_ACTIONS:
             self.last_action = nfr_action
         elif nfr_action is GameAction.RESET:
             self.last_action = None
