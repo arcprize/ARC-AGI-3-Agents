@@ -24,34 +24,47 @@ Each play starts at a known level start state $s_0 \in S$. The planner is given:
 
 During an episode the agent sits in state $s_t$ with available actions $A_t = A(s_t)$. The planner must output $a_t \in A_t \cup \{\mathrm{RESET}\}$ to minimise the distance to a frontier while optionally using reset jumps to $s_0$.
 
-\section{High-Level Algorithm}
+\section{Algorithm}
 
-We formalise the planner as follows:
-\begin{align}
-\label{eq:bfs-current}
-D_t^{c}, P_t^{c} &= \mathrm{BFS}(\mathcal{G}_t, s_t),\\
-\label{eq:bfs-reset}
-D_t^{0}, P_t^{0} &= \mathrm{BFS}(\mathcal{G}_t, s_0),
-\end{align}
-where $\mathcal{G}_t = (S_{\mathrm{disc}}, A, T_{\mathrm{known}})$ is the known subgraph. The superscript $c$ records quantities measured from the \emph{current} state $c \equiv s_t$, while $0$ denotes measurements from the reset state $s_0$. The tables $D_t^{c}$ and $D_t^{0}$ store shortest-path lengths, and each predecessor map $P_t^{\bullet}$ associates a reachable vertex $x$ with the pair $(\mathrm{parent}(x), \mathrm{action}(x))$ that realises the final step on the shortest path from the relevant source to $x$.
+\subsection{Definition}
 
-For each frontier $f \in \mathcal{F}$, define the \emph{reset-augmented cost}:
-\begin{equation}
-\label{eq:cost}
-J(f) = \min\{ D_t^{c}(f), 1 + D_t^{0}(f) \}.
-\end{equation}
-Let $f^\star$ be the minimiser of $J$, with ties broken lexicographically on the tuple $\big(J(f), D_t^{0}(f), f\big)$.
+Given the current state $s_t$, the available actions $A_t = A(s_t)$, and the level start state $s_0$, the planner executes:
+\begin{enumerate}
+    \item Run breadth-first search on the known subgraph $\mathcal{G}_t = (S_{\mathrm{disc}}, A, T_{\mathrm{known}})$ from both $s_t$ and $s_0$:
+    \begin{align}
+    \label{eq:bfs-current}
+    D_t^{c}, P_t^{c} &= \mathrm{BFS}(\mathcal{G}_t, s_t),\\
+    \label{eq:bfs-reset}
+    D_t^{0}, P_t^{0} &= \mathrm{BFS}(\mathcal{G}_t, s_0).
+    \end{align}
+    Here $D_t^{c}$ and $D_t^{0}$ record shortest-path distances, while the predecessor maps $P_t^{c}$ and $P_t^{0}$ associate each reachable vertex $x$ with the pair $(\mathrm{parent}(x), \mathrm{action}(x))$ describing the final step on the corresponding shortest path.
+    \item Compute the reset-augmented cost for every frontier $f \in \mathcal{F}$:
+    \begin{equation}
+    \label{eq:cost}
+    J(f) = \min\{ D_t^{c}(f), 1 + D_t^{0}(f) \}.
+    \end{equation}
+    \item Select the frontier
+    \[
+    f^\star = \arg\min_{f \in \mathcal{F}} \big(J(f), D_t^{0}(f), f\big),
+    \]
+    using lexicographic order on the triple $(J(f), D_t^{0}(f), f)$.
+    \item If $J(f^\star)$ is finite and $A_t$ is non-empty, return
+    \[
+    a_t = \text{first edge on the path recovered from }P_t^{c}\text{ between }s_t\text{ and }f^\star
+    \]
+    when $D_t^{c}(f^\star) \leq 1 + D_t^{0}(f^\star)$, and return $\mathrm{RESET}$ otherwise.
+\end{enumerate}
 
-The planner returns:
-\begin{equation}
-a_t =
-\begin{cases}
-\text{first edge on the path recovered from }P_t^{c}\text{ between }s_t\text{ and }f^\star, & \text{if } D_t^{c}(f^\star) \leq 1 + D_t^{0}(f^\star),\\
-\mathrm{RESET}, & \text{otherwise}.
-\end{cases}
-\end{equation}
+When $J(f^\star)$ is infinite (no reachable frontier) or $A_t$ is empty, the procedure returns no action.
 
-If no frontier admits a finite cost (equivalently, no candidate passes the loop above) the planner abstains and the caller must fall back to its default behaviour. When a frontier is selected but the reconstructed path is empty---because $s_t = f^\star$ or the predecessor map lacks a route---the planner probes the first $a \in A_t$ with $T_{\mathrm{known}}(s_t, a) = \bot$ and likewise abstains if every available action is already known. The $\mathrm{RESET}$ branch is therefore taken only when restarting from $s_0$ plus one action strictly dominates continuing from $s_t$.
+\subsection{Implementation Notes}
+
+The code performs the following additional checks:
+\begin{itemize}
+    \item If the frontier loop in step 2 yields no finite-cost candidate, the planner abstains and the caller falls back to its default policy.
+    \item If the chosen frontier satisfies $s_t = f^\star$ or the predecessor map does not contain a route, the planner probes the first $a \in A_t$ with $T_{\mathrm{known}}(s_t, a) = \bot$; it abstains when every available action is already known.
+    \item The $\mathrm{RESET}$ branch is triggered only when the inequality $D_t^{c}(f^\star) > 1 + D_t^{0}(f^\star)$ holds, i.e.\ restarting from $s_0$ plus one action is strictly cheaper than moving directly from $s_t$.
+\end{itemize}
 
 \section{Desirable Properties}
 
