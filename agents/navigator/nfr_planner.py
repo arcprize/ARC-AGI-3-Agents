@@ -27,10 +27,16 @@ class TransitionMap:
         transitions: Dict[GameAction, FrameHash] = {}
         for action_name, raw in payload.items():
             if action_name not in GameAction.__members__:
+                logger.warning("Skipping unknown action in memory payload: %s", action_name)
                 continue
             try:
                 transitions[GameAction[action_name]] = FrameHash(int(raw))
             except (TypeError, ValueError):
+                logger.warning(
+                    "Skipping transition for action %s due to invalid target %s",
+                    action_name,
+                    raw,
+                )
                 continue
         return cls(transitions)
 

@@ -24,7 +24,7 @@ from .nfr_planner import FrameHash, NearFrontierPlanner, PlannerContext, STATE_G
 
 logger = logging.getLogger()
 
-MEMORY_PATH = Path(__file__).resolve().parent / "memory" / "state_graph.json"
+MEMORY_PATH = Path(__file__).resolve().parent / "memory" / "memory.json"
 
 # === Generic infrastructure ==================================================
 
@@ -80,8 +80,8 @@ class Memory:
 
     def to_dict(self) -> dict[str, dict[str, int]]:
         return {
-            str(state_hash): {"transitions": record.to_dict()}
-            for state_hash, record in self.state_graph.items()
+            str(state_hash): {"transitions": transition_map.to_dict()}
+            for state_hash, transition_map in self.state_graph.items()
         }
 
     @classmethod
@@ -91,11 +91,16 @@ class Memory:
             try:
                 state_hash = FrameHash(int(hash_str))
             except (TypeError, ValueError):
+                logger.warning("Skipping invalid state id in memory payload: %s", hash_str)
                 continue
             transitions = (
                 info.get("transitions") if isinstance(info, dict) else None
             )
             if not isinstance(transitions, dict):
+                logger.warning(
+                    "Skipping state %s because transitions map is missing or malformed",
+                    hash_str,
+                )
                 continue
             memory.state_graph[state_hash] = TransitionMap.from_dict(transitions)
         return memory
@@ -379,15 +384,14 @@ class AbstractionNavigator(Agent):
             )
             return memory
 
-        states_section = raw.get("states")
-        if isinstance(states_section, dict):
-            loaded = Memory.from_dict(states_section)
+        if isinstance(raw, dict):
+            loaded = Memory.from_dict(raw)
             memory.state_graph.update(loaded.state_graph)
         return memory
 
     def _save_memory(self) -> None:
         MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"states": self.memory.to_dict()}
+        payload = self.memory.to_dict()
         MEMORY_PATH.write_text(json.dumps(payload, indent=2))
 
     # --- State tracking ---------------------------------------------------
