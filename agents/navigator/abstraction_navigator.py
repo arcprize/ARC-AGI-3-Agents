@@ -110,7 +110,6 @@ class AbstractionNavigator(Agent):
         self.abstraction_builders: list[
             Callable[[FrameAbstraction, dict[str, Any]], None]
         ] = []
-        self.last_snapshot: Optional[FrameAbstraction] = None
         self._register_game_abstractions()
 
     @property
@@ -181,7 +180,6 @@ class AbstractionNavigator(Agent):
         self.energy_capacity = None
         self.current_level = 0
         self.level_events = []
-        self.last_snapshot = None
         self._level_start_state = None
         self._snapshot = None
         self._prev_snapshot = None
@@ -199,8 +197,6 @@ class AbstractionNavigator(Agent):
         frame_hash = self._hash_grid(grid)
         abstraction = FrameAbstraction(frame_hash=frame_hash, grid=grid)
         context = {
-            "frame": frame,
-            "previous": self.last_snapshot,
             "energy_measurement": energy_measurement,
         }
         for builder in self.abstraction_builders:
@@ -230,7 +226,6 @@ class AbstractionNavigator(Agent):
 
         self._prev_snapshot = prev_snapshot
         self._snapshot = snapshot
-        self.last_snapshot = abstraction
 
         if self._level_start_state is None:
             self._level_start_state = snapshot.frame_hash
@@ -457,14 +452,14 @@ class AbstractionNavigator(Agent):
         )
 
     def _build_player_abstraction(
-        self, snapshot: FrameAbstraction, context: dict[str, Any]
+        self, abstraction: FrameAbstraction, context: dict[str, Any]
     ) -> None:
-        detection = self._detect_player(snapshot.grid)
+        detection = self._detect_player(abstraction.grid)
         if detection:
-            snapshot.add("player", detection)
+            abstraction.add("player", detection)
 
     def _build_energy_abstraction(
-        self, snapshot: FrameAbstraction, context: dict[str, Any]
+        self, abstraction: FrameAbstraction, context: dict[str, Any]
     ) -> None:
         measurement = context.get("energy_measurement")
         if not measurement:
@@ -472,7 +467,7 @@ class AbstractionNavigator(Agent):
         blocks_filled, capacity, _ = measurement
         if capacity:
             self.energy_capacity = capacity
-        snapshot.add(
+        abstraction.add(
             "energy",
             {
                 "blocks": blocks_filled,
