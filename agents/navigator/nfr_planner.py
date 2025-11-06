@@ -58,22 +58,23 @@ class NearFrontierPlanner:
         for state in self._frontier_states():
             d_current = dist_c.get(state, INF)
             d_reset = dist_s0.get(state, INF)
-            d_plus = min(d_current, 1 + d_reset)
-            if d_plus >= INF:
+            frontier_cost = min(d_current, 1 + d_reset)
+            if frontier_cost >= INF:
                 continue
-            key = (d_plus, d_reset, state)
+            key = (frontier_cost, d_reset, state)
             if best is None or key < best:
                 best = key
 
         if best is None:
             return None
 
+        # best stores (cost, reset_distance, frontier_state)
         _, d_reset, target_state = best
         d_current = dist_c.get(target_state, INF)
 
         navigation: List[GameAction] = []
         if d_current <= 1 + d_reset:
-            navigation = self._extract_path_actions(prev_c, current_state, target_state)
+            navigation = self._recover_path(prev_c, current_state, target_state)
         else:
             logger.info(
                 "nfr-reset decision: current=%s s0=%s target=%s d_current=%s d_reset=%s available=%s",
@@ -137,7 +138,7 @@ class NearFrontierPlanner:
                 queue.append(neighbor)
         return distances, predecessors
 
-    def _extract_path_actions(
+    def _recover_path(
         self,
         predecessors: Dict[FrameHash, Tuple[FrameHash, GameAction]],
         start: FrameHash,
