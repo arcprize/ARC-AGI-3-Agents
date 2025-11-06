@@ -4,13 +4,33 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, Mapping, NewType
+from typing import Dict, Mapping, NewType, Tuple
 
 from ..structs import GameAction
 
 logger = logging.getLogger(__name__)
 
 FrameHash = NewType("FrameHash", int)
+
+Grid = list[list[int]]
+
+@dataclass(frozen=True)
+class EnergyHudMeasurement:
+    """Structured representation of the HUD energy bar."""
+
+    filled_blocks: int
+    capacity: int
+    rect: Tuple[int, int, int, int]
+
+    @property
+    def empty_blocks(self) -> int:
+        return max(self.capacity - self.filled_blocks, 0)
+
+    @property
+    def fill_ratio(self) -> float:
+        if self.capacity == 0:
+            return 0.0
+        return self.filled_blocks / self.capacity
 
 
 @dataclass

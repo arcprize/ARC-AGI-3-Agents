@@ -16,12 +16,12 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional, TypedDict
+from typing import Any, Callable, Optional, Tuple, TypedDict
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
 from .nfr_planner import NearFrontierPlanner
-from .types import FrameHash, Memory, STATE_GRAPH, TransitionMap
+from .types import EnergyHudMeasurement, FrameHash, Grid, Memory, TransitionMap
 
 logger = logging.getLogger()
 
@@ -49,7 +49,7 @@ class FrameAbstraction:
     """In-memory snapshot of a frame enhanced with higher-level abstractions."""
 
     frame_hash: FrameHash
-    grid: list[list[Any]]
+    grid: Grid
     abstractions: dict[str, Any] = field(default_factory=dict)
 
     def add(self, name: str, value: Any) -> None:
@@ -57,6 +57,9 @@ class FrameAbstraction:
 
     def get(self, name: str) -> Any:
         return self.abstractions.get(name)
+
+
+AbstractionBuilder = Callable[[FrameAbstraction], None]
 
 
 @dataclass(frozen=True)
@@ -67,8 +70,9 @@ class NavigatorSnapshot:
     abstraction: FrameAbstraction
     frame_hash: FrameHash
     score: int
-    energy_blocks: Optional[int]
-    energy_capacity: Optional[int]
+    energy: Optional[EnergyHudMeasurement]
+    available_actions: tuple[GameAction, ...]
+    game_state: GameState
 
 
 class AbstractionNavigator(Agent):
@@ -107,9 +111,7 @@ class AbstractionNavigator(Agent):
         self.current_level = 0
         self.level_events: list[LevelEvent] = []
 
-        self.abstraction_builders: list[
-            Callable[[FrameAbstraction, dict[str, Any]], None]
-        ] = []
+        self.abstraction_builders: list[AbstractionBuilder] = []
         self._register_game_abstractions()
 
     @property
@@ -151,7 +153,7 @@ class AbstractionNavigator(Agent):
             return action
 
         current_state = snapshot.frame_hash
-        available_actions = list(snapshot.frame.available_actions)
+        available_actions = list(snapshot.available_actions)
 
         if self._level_start_state is None:
             self._level_start_state = current_state
@@ -196,12 +198,9 @@ class AbstractionNavigator(Agent):
         energy_measurement = self._measure_energy_blocks(grid)
         frame_hash = self._hash_grid(grid)
         abstraction = FrameAbstraction(frame_hash=frame_hash, grid=grid)
-        context = {
-            "energy_measurement": energy_measurement,
-        }
         for builder in self.abstraction_builders:
             try:
-                builder(abstraction, context)
+                builder(abstraction)
             except Exception:
                 logger.exception(
                     "%s abstraction builder %s failed",
@@ -209,19 +208,17 @@ class AbstractionNavigator(Agent):
                     builder.__name__,
                 )
 
-        energy_blocks = None
-        if energy_measurement:
-            energy_blocks, capacity, _ = energy_measurement
-            if capacity:
-                self.energy_capacity = capacity
+        if energy_measurement is not None and energy_measurement.capacity:
+            self.energy_capacity = energy_measurement.capacity
 
         snapshot = NavigatorSnapshot(
             frame=frame,
             abstraction=abstraction,
             frame_hash=frame_hash,
             score=frame.score,
-            energy_blocks=energy_blocks,
-            energy_capacity=self.energy_capacity,
+            energy=energy_measurement,
+            available_actions=tuple(frame.available_actions or ()),
+            game_state=frame.state,
         )
 
         self._prev_snapshot = prev_snapshot
@@ -386,6 +383,9 @@ class AbstractionNavigator(Agent):
 
     
     # --- Hashing: HUD-masked grid hashing ---------------------------------
+    ENERGY_HUD_RECT = (1, 2, 2, 45)  # (y0, y1, x0, x1); tuned for ls20 energy bar
+
+
     def _hash_grid(self, grid: list[list[Any]]) -> FrameHash:
         """
         Return a hash of the grid **ignoring HUD cells** if a HUD rect is present.
@@ -439,41 +439,40 @@ class AbstractionNavigator(Agent):
             return first if isinstance(first, int) else 0
         return 0
 
-    # === Game-specific abstractions (ls20) =================================
 
-    ENERGY_HUD_RECT = (1, 2, 2, 45)  # (y0, y1, x0, x1); tuned for ls20 energy bar
+    # === User-level abstractions (ls20) ====================================
+
+
+    @dataclass(frozen=True)
+    class BoundingBox:
+        min_y: int
+        max_y: int
+        min_x: int
+        max_x: int
+
+        @property
+        def height(self) -> int:
+            return self.max_y - self.min_y + 1
+
+        @property
+        def width(self) -> int:
+            return self.max_x - self.min_x + 1
+
+    @dataclass(frozen=True)
+    class PlayerDetection:
+        """Example of a user-defined abstraction."""
+
+        center: Tuple[float, float]
+        pixel_count: int
+        bbox: "AbstractionNavigator.BoundingBox"
 
     def _register_game_abstractions(self) -> None:
-        self.abstraction_builders.extend(
-            [
-                self._build_player_abstraction,
-                self._build_energy_abstraction,
-            ]
-        )
+        self.abstraction_builders.append(self._build_player_abstraction)
 
-    def _build_player_abstraction(
-        self, abstraction: FrameAbstraction, context: dict[str, Any]
-    ) -> None:
+    def _build_player_abstraction(self, abstraction: FrameAbstraction) -> None:
         detection = self._detect_player(abstraction.grid)
         if detection:
             abstraction.add("player", detection)
-
-    def _build_energy_abstraction(
-        self, abstraction: FrameAbstraction, context: dict[str, Any]
-    ) -> None:
-        measurement = context.get("energy_measurement")
-        if not measurement:
-            return
-        blocks_filled, capacity, _ = measurement
-        if capacity:
-            self.energy_capacity = capacity
-        abstraction.add(
-            "energy",
-            {
-                "blocks": blocks_filled,
-                "capacity": capacity,
-            },
-        )
 
     def _handle_level_change(self, snapshot: NavigatorSnapshot) -> None:
         self.current_level = snapshot.score
@@ -488,8 +487,8 @@ class AbstractionNavigator(Agent):
             "timestamp": time.time(),
         }
 
-        if snapshot.energy_blocks is not None:
-            event["energy"] = snapshot.energy_blocks
+        if snapshot.energy is not None:
+            event["energy"] = snapshot.energy.filled_blocks
 
         self.level_events.append(event)
         snapshot.abstraction.add("level_transition", event)
@@ -500,7 +499,9 @@ class AbstractionNavigator(Agent):
             self.action_counter,
         )
 
-    def _detect_player(self, grid: list[list[Any]]) -> Optional[dict[str, Any]]:
+    def _detect_player(
+        self, grid: list[list[Any]]
+    ) -> Optional["AbstractionNavigator.PlayerDetection"]:
         positions: list[tuple[int, int]] = []
         for y, row in enumerate(grid):
             for x, cell in enumerate(row):
@@ -525,20 +526,22 @@ class AbstractionNavigator(Agent):
         count = len(positions)
         center = (total_y / count, total_x / count)
 
-        return {
-            "center": center,
-            "pixel_count": count,
-            "bbox": {
-                "min_y": min_y,
-                "max_y": max_y,
-                "min_x": min_x,
-                "max_x": max_x,
-            },
-        }
+        bbox = self.BoundingBox(
+            min_y=min_y,
+            max_y=max_y,
+            min_x=min_x,
+            max_x=max_x,
+        )
+
+        return self.PlayerDetection(
+            center=center,
+            pixel_count=count,
+            bbox=bbox,
+        )
 
     def _measure_energy_blocks(
         self, grid: list[list[Any]]
-    ) -> Optional[tuple[int, int, tuple[int, int, int, int]]]:
+    ) -> Optional[EnergyHudMeasurement]:
         row_index = 2
         if len(grid) <= row_index or not grid[row_index]:
             return None
@@ -561,11 +564,19 @@ class AbstractionNavigator(Agent):
         if total < 6:
             values = {self._cell_value(row[x]) for x in range(x0, upper_x + 1, 2)}
             if values == {8} and self.energy_capacity:
-                return 0, self.energy_capacity, self.ENERGY_HUD_RECT
+                return EnergyHudMeasurement(
+                    filled_blocks=0,
+                    capacity=self.energy_capacity,
+                    rect=self.ENERGY_HUD_RECT,
+                )
             return None
 
         if any(v not in (3, 15) for v in blocks):
             return None
 
         filled = sum(1 for v in blocks if v == 15)
-        return filled, total, self.ENERGY_HUD_RECT
+        return EnergyHudMeasurement(
+            filled_blocks=filled,
+            capacity=total,
+            rect=self.ENERGY_HUD_RECT,
+        )
