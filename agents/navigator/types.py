@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, Mapping, NewType, Tuple
+from typing import Any, Dict, Mapping, NewType, Tuple
 
 from ..structs import GameAction
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 FrameHash = NewType("FrameHash", int)
 
-Grid = list[list[int]]
+Grid = list[list[Any]]
 
 @dataclass(frozen=True)
 class EnergyHudMeasurement:
