@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """AbstractionNavigator: iterate fast, capture insights.
 
 Update cycle:
@@ -75,6 +77,28 @@ class Memory:
     """Persistent navigation memories retained across runs."""
 
     state_graph: STATE_GRAPH = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, dict[str, int]]:
+        return {
+            str(state_hash): {"transitions": record.to_dict()}
+            for state_hash, record in self.state_graph.items()
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, dict[str, int]]) -> Memory:
+        memory = cls()
+        for hash_str, info in payload.items():
+            try:
+                state_hash = FrameHash(int(hash_str))
+            except (TypeError, ValueError):
+                continue
+            transitions = (
+                info.get("transitions") if isinstance(info, dict) else None
+            )
+            if not isinstance(transitions, dict):
+                continue
+            memory.state_graph[state_hash] = TransitionMap.from_dict(transitions)
+        return memory
 
 
 class AbstractionNavigator(Agent):
@@ -342,12 +366,11 @@ class AbstractionNavigator(Agent):
 
     def _load_memory(self) -> Memory:
         memory = Memory()
-        state_graph = memory.state_graph
         if not MEMORY_PATH.exists():
             return memory
 
         try:
-            data = json.loads(MEMORY_PATH.read_text())
+            raw = json.loads(MEMORY_PATH.read_text())
         except (json.JSONDecodeError, OSError):
             logger.warning(
                 "%s could not load memory file %s; starting fresh",
@@ -356,42 +379,15 @@ class AbstractionNavigator(Agent):
             )
             return memory
 
-        states_section = data.get("states")
+        states_section = raw.get("states")
         if isinstance(states_section, dict):
-            for hash_str, info in states_section.items():
-                try:
-                    state_hash = FrameHash(int(hash_str))
-                except (TypeError, ValueError):
-                    continue
-                transitions = (
-                    info.get("transitions") if isinstance(info, dict) else None
-                )
-                if not isinstance(transitions, dict):
-                    continue
-                record = state_graph.setdefault(state_hash, TransitionMap())
-                for action_name, target_value in transitions.items():
-                    if action_name not in GameAction.__members__:
-                        continue
-                    try:
-                        target_hash = FrameHash(int(target_value))
-                    except (TypeError, ValueError):
-                        continue
-                    record.transitions[GameAction[action_name]] = target_hash
+            loaded = Memory.from_dict(states_section)
+            memory.state_graph.update(loaded.state_graph)
         return memory
 
     def _save_memory(self) -> None:
         MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "states": {
-                str(state_hash): {
-                    "transitions": {
-                        action.name: int(target)
-                        for action, target in record.transitions.items()
-                    },
-                }
-                for state_hash, record in self.memory.state_graph.items()
-            }
-        }
+        payload = {"states": self.memory.to_dict()}
         MEMORY_PATH.write_text(json.dumps(payload, indent=2))
 
     # --- State tracking ---------------------------------------------------
