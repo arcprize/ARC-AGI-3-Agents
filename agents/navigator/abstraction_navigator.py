@@ -87,6 +87,8 @@ class AbstractionNavigator(Agent):
             state_knowledge=self.state_knowledge,
         )
         self._nfr_planner = NearFrontierPlanner(planner_context)
+        self._pending_level_start = False
+        self._level_transition_hash: Optional[FrameHash] = None
 
         self.energy_capacity: Optional[int] = None
         self.current_level = 0
@@ -165,6 +167,8 @@ class AbstractionNavigator(Agent):
         self.last_snapshot = None
         self._level_start_state = None
         self._last_score = 0
+        self._pending_level_start = False
+        self._level_transition_hash = None
 
     def _observe(self, frame: FrameData) -> None:
         if frame.is_empty() or not frame.frame:
@@ -193,6 +197,12 @@ class AbstractionNavigator(Agent):
         current_score = frame.score
         level_changed = current_score != self._last_score
         self._last_score = current_score
+
+        if self._pending_level_start and self._level_transition_hash != frame_hash:
+            self._level_start_state = frame_hash
+            self._pending_level_start = False
+            self._level_transition_hash = None
+            logger.info("%s level start confirmed at hash=%s", self.game_id, frame_hash)
         
 
         if level_changed:
@@ -529,7 +539,8 @@ class AbstractionNavigator(Agent):
         current_score: int,
     ) -> None:
         self.current_level = current_score
-        self._level_start_state = snapshot.frame_hash
+        self._pending_level_start = True
+        self._level_transition_hash = snapshot.frame_hash
 
         event: LevelEvent = {
             "level": self.current_level,
