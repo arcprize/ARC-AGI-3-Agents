@@ -350,7 +350,7 @@ class AbstractionNavigator(Agent):
             data = json.loads(MEMORY_PATH.read_text())
         except (json.JSONDecodeError, OSError):
             logger.warning(
-                "%s could not load knowledge file %s; starting fresh",
+                "%s could not load memory file %s; starting fresh",
                 self.game_id,
                 MEMORY_PATH,
             )
@@ -363,89 +363,20 @@ class AbstractionNavigator(Agent):
                     state_hash = FrameHash(int(hash_str))
                 except (TypeError, ValueError):
                     continue
-                transition_map = TransitionMap()
-                if isinstance(info, dict):
-                    transitions = info.get("transitions", {})
-                    if isinstance(transitions, dict):
-                        for action_name, target_value in transitions.items():
-                            if action_name not in GameAction.__members__:
-                                continue
-                            try:
-                                target_hash = FrameHash(int(target_value))
-                            except (TypeError, ValueError):
-                                continue
-                            transition_map.transitions[GameAction[action_name]] = target_hash
-                state_graph[state_hash] = transition_map
-
-        if not state_graph:
-            # Backwards-compatibility: older layout with visit counts + transitions list
-            legacy_counts = data.get("visit_counts")
-            if isinstance(legacy_counts, dict):
-                for hash_str, count in legacy_counts.items():
+                transitions = (
+                    info.get("transitions") if isinstance(info, dict) else None
+                )
+                if not isinstance(transitions, dict):
+                    continue
+                record = state_graph.setdefault(state_hash, TransitionMap())
+                for action_name, target_value in transitions.items():
+                    if action_name not in GameAction.__members__:
+                        continue
                     try:
-                        state_hash = FrameHash(int(hash_str))
+                        target_hash = FrameHash(int(target_value))
                     except (TypeError, ValueError):
                         continue
-                    transition_map = state_graph.setdefault(state_hash, TransitionMap())
-            else:
-                states_group = data.get("states", {})
-                if isinstance(states_group, dict):
-                    info = states_group.get(self.game_id)
-                    if isinstance(info, dict):
-                        visit_counts = info.get("visit_counts", {})
-                        if isinstance(visit_counts, dict):
-                            for hash_str, count in visit_counts.items():
-                                try:
-                                    state_hash = FrameHash(int(hash_str))
-                                except (TypeError, ValueError):
-                                    continue
-                                transition_map = state_graph.setdefault(
-                                    state_hash, TransitionMap()
-                                )
-
-            transitions_section = data.get("state_transitions", [])
-            if isinstance(transitions_section, list):
-                for item in transitions_section:
-                    if not isinstance(item, dict):
-                        continue
-                    game_id = item.get("game_id")
-                    if game_id is not None and game_id != self.game_id:
-                        continue
-                    source = item.get("source")
-                    action_name = item.get("action")
-                    if (
-                        not isinstance(source, int)
-                        or not isinstance(action_name, str)
-                        or action_name not in GameAction.__members__
-                    ):
-                        continue
-                    action = GameAction[action_name]
-                    source_hash = FrameHash(source)
-                    transition_map = state_graph.setdefault(source_hash, TransitionMap())
-                    target_value = item.get("target")
-                    if isinstance(target_value, int):
-                        transition_map.transitions[action] = FrameHash(target_value)
-                        state_graph.setdefault(transition_map.transitions[action], TransitionMap())
-                        continue
-                    targets_dict = item.get("targets")
-                    if isinstance(targets_dict, dict) and targets_dict:
-                        try:
-                            target_hash_str, count = max(
-                                targets_dict.items(), key=lambda kv: kv[1]
-                            )
-                            target_hash = FrameHash(int(target_hash_str))
-                        except (TypeError, ValueError):
-                            continue
-                        if len({k for k in targets_dict}) > 1:
-                            logger.warning(
-                                "%s non-deterministic transition observed for state=%s action=%s; using most frequent target",
-                                self.game_id,
-                                source_hash,
-                                action_name,
-                            )
-                        transition_map.transitions[action] = target_hash
-                        state_graph.setdefault(target_hash, TransitionMap())
-
+                    record.transitions[GameAction[action_name]] = target_hash
         return memory
 
     def _save_memory(self) -> None:
