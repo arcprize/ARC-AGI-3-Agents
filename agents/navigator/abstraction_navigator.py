@@ -9,33 +9,32 @@ Update cycle:
   4. Re-run, rinse, repeat—commit once a new abstraction proves useful.
 """
 
-import json
 import logging
 import random
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional, Tuple, TypedDict
+from typing import Any, Callable, Optional
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
 from .nfr_planner import NearFrontierPlanner
-from .types import EnergyHudMeasurement, FrameHash, Grid, Memory, TransitionMap
+from .types import (
+    EnergyHudMeasurement,
+    FrameHash,
+    Grid,
+    LevelEvent,
+    Memory,
+    TransitionMap,
+    load_memory,
+    persist_metrics,
+    save_memory,
+)
 
 logger = logging.getLogger()
 
 MEMORY_PATH = Path(__file__).resolve().parent / "memory" / "memory.json"
-
-# === Generic infrastructure ==================================================
-
-class LevelEvent(TypedDict):
-    level: int
-    step: int
-    state_hash: int
-    energy: int
-    timestamp: float
-
 
 class NavigatorMode(str, Enum):
     """Operating modes for the abstraction navigator."""
@@ -79,7 +78,7 @@ class BoundingBox:
 class PlayerDetection:
     """Example of a user-defined abstraction."""
 
-    center: Tuple[float, float]
+    center: tuple[float, float]
     pixel_count: int
     bbox: BoundingBox
 
@@ -87,20 +86,11 @@ class PlayerDetection:
 GridAbstraction = Callable[[Grid], Optional[Any]]
 
 
-def cell_value(cell: Any) -> int:
-    if isinstance(cell, int):
-        return cell
-    if isinstance(cell, list) and cell:
-        first = cell[0]
-        return first if isinstance(first, int) else 0
-    return 0
-
-
 def detect_player(grid: Grid) -> Optional[PlayerDetection]:
     positions: list[tuple[int, int]] = []
     for y, row in enumerate(grid):
         for x, cell in enumerate(row):
-            if cell_value(cell) == 12:
+            if cell == 12:
                 positions.append((y, x))
 
     if not positions or len(positions) > 256:
@@ -148,7 +138,7 @@ def measure_energy_blocks(
 
     blocks: list[int] = []
     for x in range(x0, upper_x + 1, 2):
-        value = cell_value(row[x])
+        value = row[x]
         if value in (3, 15):
             blocks.append(value)
         elif blocks:
@@ -156,7 +146,7 @@ def measure_energy_blocks(
 
     total = len(blocks)
     if total < 6:
-        values = {cell_value(row[x]) for x in range(x0, upper_x + 1, 2)}
+        values = {row[x] for x in range(x0, upper_x + 1, 2)}
         if values == {8} and capacity_hint:
             return EnergyHudMeasurement(
                 filled_blocks=0,
@@ -211,13 +201,12 @@ class AbstractionNavigator(Agent):
         mode_value = kwargs.pop("mode", NavigatorMode.EXPLORE)
         self.mode = NavigatorMode(mode_value)
         super().__init__(*args, **kwargs)
-        # --- NFR planning state ---
-        self._level_start_state: Optional[FrameHash] = None  # s0 of current level
+        self._level_start_state: Optional[FrameHash] = None
         seed = int(time.time() * 1_000_000) ^ hash(self.game_id)
         self.rng = random.Random(seed)
         self.last_action: Optional[GameAction] = None
 
-        self.memory: Memory = self._load_memory()
+        self.memory: Memory = load_memory(MEMORY_PATH, logger_prefix=self.game_id)
         self.unique_states_this_run: set[FrameHash] = set()
         self._nfr_planner = NearFrontierPlanner(
             arrow_actions=self.ARROW_ACTIONS,
@@ -245,11 +234,9 @@ class AbstractionNavigator(Agent):
             ]
         )
 
-    
     def choose_action(
         self, frames: list[FrameData], latest_frame: FrameData
     ) -> GameAction:
-        # Reset the environment if it's not in a playable state
         if latest_frame.state in (GameState.NOT_PLAYED, GameState.GAME_OVER):
             self._reset_tracking()
             action = GameAction.RESET
@@ -260,7 +247,7 @@ class AbstractionNavigator(Agent):
             logger.info("%s TODO mode: planning logic not yet implemented", self.game_id)
             raise NotImplementedError("Navigator TODO mode is a placeholder")
 
-        # Observe and update discovered graph / level / HUD
+        # Observe and update discovered graph / level / HUD.
         self._observe(latest_frame)
 
         snapshot = self._snapshot
@@ -292,7 +279,6 @@ class AbstractionNavigator(Agent):
         elif nfr_action is GameAction.RESET:
             self.last_action = None
         return nfr_action
-
 
     def _reset_tracking(self) -> None:
         self.last_action = None
@@ -406,70 +392,19 @@ class AbstractionNavigator(Agent):
                 self.level_events,
             )
 
-        self._save_memory()
+        save_memory(self.memory, MEMORY_PATH)
 
-        self._persist_metrics(
+        persist_metrics(
+            recorder=getattr(self, "recorder", None),
+            game_id=self.game_id,
+            agent_name=self.name,
             states_visited_run=states_visited_run,
             known_states_total=known_states_total,
+            energy_capacity=self.energy_capacity,
             level_events=self.level_events,
         )
 
         super().cleanup(scorecard)
-
-    # --- Persistence ------------------------------------------------------
-
-    def _persist_metrics(
-        self,
-        *,
-        states_visited_run: int,
-        known_states_total: int,
-        level_events: list[LevelEvent],
-    ) -> None:
-        recorder = getattr(self, "recorder", None)
-        if not recorder or not getattr(recorder, "filename", None):
-            return
-
-        target_path = Path(recorder.filename).with_suffix(".tracking.json")
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-
-        payload = {
-            "game_id": self.game_id,
-            "agent": self.name,
-            "states_visited_run": states_visited_run,
-            "known_states_total": known_states_total,
-            "energy_capacity": self.energy_capacity,
-            "level_events": level_events,
-        }
-
-        with target_path.open("w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
-
-    def _load_memory(self) -> Memory:
-        memory = Memory()
-        if not MEMORY_PATH.exists():
-            return memory
-
-        try:
-            raw = json.loads(MEMORY_PATH.read_text())
-        except (json.JSONDecodeError, OSError):
-            logger.warning(
-                "%s could not load memory file %s; starting fresh",
-                self.game_id,
-                MEMORY_PATH,
-            )
-            return memory
-
-        if isinstance(raw, dict):
-            loaded = Memory.from_dict(raw)
-            memory.state_graph.update(loaded.state_graph)
-        return memory
-
-    def _save_memory(self) -> None:
-        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        payload = self.memory.to_dict()
-        MEMORY_PATH.write_text(json.dumps(payload, indent=2))
-
-    # --- State tracking ---------------------------------------------------
 
     def _record_state_visit(self, frame_hash: FrameHash) -> None:
         state_graph = self.memory.state_graph
@@ -505,13 +440,12 @@ class AbstractionNavigator(Agent):
             logger.error(message)
             raise ValueError(message)
 
-    
-    # --- Hashing: HUD-masked grid hashing ---------------------------------
     def _hash_grid(self, grid: Grid) -> FrameHash:
         """
-        Return a hash of the grid **ignoring HUD cells** if a HUD rect is present.
-        We treat HUD as adversarially chosen noise: masking it collapses states
-        that differ only by score rendering into a single identifier.
+        Return a hash of the grid ignoring the HUD rectangle.
+
+        The HUD is treated as adversarial noise: masking it collapses states that only
+        differ by score rendering into a single identifier, keeping the graph stable.
         """
         if not grid:
             return FrameHash(0)
@@ -536,20 +470,10 @@ class AbstractionNavigator(Agent):
                 if y0 <= y <= y1 and x0 <= x <= x1:
                     normalized_row.append(0)
                 else:
-                    normalized_row.append(cell_value(cell))
+                    normalized_row.append(cell)
             normalized.append(tuple(normalized_row))
         return FrameHash(hash(tuple(normalized)))
 
-    # --- NFR helpers: graph building and shortest paths --------------------
-    @staticmethod
-    def _hash_frame(grid: Grid) -> FrameHash:
-        if not grid:
-            return FrameHash(0)
-        normalized = [
-            tuple(cell_value(cell) for cell in row)
-            for row in grid
-        ]
-        return FrameHash(hash(tuple(normalized)))
 
     def _handle_level_change(self, snapshot: NavigatorSnapshot) -> None:
         self.current_level = snapshot.score
@@ -560,12 +484,9 @@ class AbstractionNavigator(Agent):
             "level": self.current_level,
             "step": self.action_counter,
             "state_hash": snapshot.frame_hash,
-            "energy": 0,
+            "energy": snapshot.energy.filled_blocks if snapshot.energy else 0,
             "timestamp": time.time(),
         }
-
-        if snapshot.energy is not None:
-            event["energy"] = snapshot.energy.filled_blocks
 
         self.level_events.append(event)
         snapshot.abstraction.add("level_transition", event)

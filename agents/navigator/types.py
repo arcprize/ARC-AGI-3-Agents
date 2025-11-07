@@ -1,10 +1,12 @@
-"""Shared type definitions for navigator modules."""
+"""Shared type definitions and helpers for navigator modules."""
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, NewType, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, NewType, Optional, Tuple, TypedDict
 
 from ..structs import GameAction
 
@@ -13,6 +15,15 @@ logger = logging.getLogger(__name__)
 FrameHash = NewType("FrameHash", int)
 
 Grid = list[list[Any]]
+
+
+class LevelEvent(TypedDict):
+    level: int
+    step: int
+    state_hash: int
+    energy: int
+    timestamp: float
+
 
 @dataclass(frozen=True)
 class EnergyHudMeasurement:
@@ -90,3 +101,56 @@ class Memory:
                 continue
             memory.state_graph[state_hash] = TransitionMap.from_dict(transitions)
         return memory
+
+
+def load_memory(path: Path, *, logger_prefix: Optional[str] = None) -> Memory:
+    if not path.exists():
+        return Memory()
+    try:
+        raw = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        logger.warning(
+            "%s could not load memory file %s; starting fresh",
+            logger_prefix or "navigator",
+            path,
+        )
+        return Memory()
+    if isinstance(raw, dict):
+        return Memory.from_dict(raw)
+    logger.warning(
+        "%s memory file %s was not a dict; starting fresh",
+        logger_prefix or "navigator",
+        path,
+    )
+    return Memory()
+
+
+def save_memory(memory: Memory, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(memory.to_dict(), indent=2))
+
+
+def persist_metrics(
+    *,
+    recorder: Any,
+    game_id: str,
+    agent_name: str,
+    states_visited_run: int,
+    known_states_total: int,
+    energy_capacity: Optional[int],
+    level_events: List[LevelEvent],
+) -> None:
+    if not recorder or not getattr(recorder, "filename", None):
+        return
+    target_path = Path(recorder.filename).with_suffix(".tracking.json")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "game_id": game_id,
+        "agent": agent_name,
+        "states_visited_run": states_visited_run,
+        "known_states_total": known_states_total,
+        "energy_capacity": energy_capacity,
+        "level_events": level_events,
+    }
+    with target_path.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
