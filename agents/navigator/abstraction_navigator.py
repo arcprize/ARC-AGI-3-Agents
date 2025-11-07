@@ -33,6 +33,7 @@ You must provide:
 from dataclasses import dataclass
 from typing import Optional, Any
 
+from ..agent import Agent
 from .abstractions import USER_ABSTRACTIONS
 from .base_navigator import BaseAbstractionNavigator
 from .grid_hash import FrameMask, MaskRect
@@ -167,7 +168,7 @@ USER_ABSTRACTIONS.extend(
 )
 
 
-class AbstractionNavigator(BaseAbstractionNavigator):
+class AbstractionNavigator(BaseAbstractionNavigator, Agent):
     """Concrete navigator that wires up game-specific pieces.
 
     You can extend `USER_ABSTRACTIONS` and/or adjust masks and measurements

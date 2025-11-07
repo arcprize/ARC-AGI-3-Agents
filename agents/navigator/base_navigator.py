@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
-from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
 from .abstractions import FrameAbstraction, AbstractionDetector
 from .grid_hash import FrameMask, hash_frame
@@ -51,7 +50,7 @@ class NavigatorSnapshot:
     game_state: GameState
 
 
-class BaseAbstractionNavigator(Agent):
+class BaseAbstractionNavigator:
     """Exploration-focused agent with pluggable, game-specific abstractions.
 
     Provide the following game-specific hooks when constructing:
