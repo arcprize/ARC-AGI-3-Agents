@@ -117,7 +117,7 @@ class NavigatorSnapshot:
     energy: Optional[EnergyHudMeasurement]
     energy_capacity: Optional[int]
     level_start_state: FrameHash
-    available_actions: tuple[GameAction, ...]
+    available_actions: list[GameAction]
     game_state: GameState
 
 
@@ -169,14 +169,11 @@ class AbstractionNavigator(Agent):
 
         # Package raw frame into a snapshot with derived abstractions/state info.
         snapshot = self._create_navigator_snapshot(latest_frame)
-        current_state = snapshot.frame_hash
-        available_actions = list(snapshot.available_actions)
 
-        level_start_state = snapshot.level_start_state
         nfr_action = self._nfr_planner.next_action(
-            current_state=current_state,
-            available_actions=available_actions,
-            level_start_state=level_start_state,
+            current_state=snapshot.frame_hash,
+            available_actions=snapshot.available_actions,
+            level_start_state=snapshot.level_start_state,
         )
         if nfr_action is None:
             action = GameAction.RESET
@@ -237,7 +234,7 @@ class AbstractionNavigator(Agent):
             energy=energy_measurement,
             energy_capacity=energy_capacity,
             level_start_state=level_start_state,
-            available_actions=tuple(frame_data.available_actions or ()),
+            available_actions=frame_data.available_actions,
             game_state=frame_data.state,
         )
 
