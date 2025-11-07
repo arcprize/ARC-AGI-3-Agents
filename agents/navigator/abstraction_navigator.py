@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
@@ -58,119 +58,58 @@ class FrameAbstraction:
         return self.abstractions.get(name)
 
 
-@dataclass(frozen=True)
-class BoundingBox:
-    min_y: int
-    max_y: int
-    min_x: int
-    max_x: int
-
-    @property
-    def height(self) -> int:
-        return self.max_y - self.min_y + 1
-
-    @property
-    def width(self) -> int:
-        return self.max_x - self.min_x + 1
-
-
-@dataclass(frozen=True)
-class PlayerDetection:
-    """Example of a user-defined abstraction."""
-
-    center: tuple[float, float]
-    pixel_count: int
-    bbox: BoundingBox
-
-
 AbstractionDetector = Callable[[Frame], Optional[Any]]
 
+MaskRect = tuple[int, int, int, int]
+FrameMask = Sequence[MaskRect]
 
-def detect_player(frame_cells: Frame) -> Optional[PlayerDetection]:
-    positions: list[tuple[int, int]] = []
-    for y, row in enumerate(frame_cells):
-        for x, cell in enumerate(row):
-            if cell == 12:
-                positions.append((y, x))
-
-    if not positions or len(positions) > 256:
-        return None
-
-    min_y = min(y for y, _ in positions)
-    max_y = max(y for y, _ in positions)
-    min_x = min(x for _, x in positions)
-    max_x = max(x for _, x in positions)
-
-    height = max_y - min_y + 1
-    width = max_x - min_x + 1
-    if height > 16 or width > 16:
-        return None
-
-    total_y = sum(y for y, _ in positions)
-    total_x = sum(x for _, x in positions)
-    count = len(positions)
-    center = (total_y / count, total_x / count)
-
-    bbox = BoundingBox(
-        min_y=min_y,
-        max_y=max_y,
-        min_x=min_x,
-        max_x=max_x,
-    )
-    return PlayerDetection(center=center, pixel_count=count, bbox=bbox)
+# Game-specific detectors extend this list near the bottom of the file.
+USER_ABSTRACTIONS: list[tuple[str, AbstractionDetector]] = []
 
 
-ENERGY_HUD_RECT = (1, 2, 2, 45)  # (y0, y1, x0, x1); tuned for ls20 energy bar
+def hash_frame(frame: Frame, *, mask: Optional[FrameMask] = None) -> FrameHash:
+    """Return a hash of the frame with the masked regions zeroed out."""
 
+    if not frame:
+        return FrameHash(0)
 
-def measure_energy_blocks(
-    frame_cells: Frame, *, capacity_hint: Optional[int] = None
-) -> Optional[EnergyHudMeasurement]:
-    row_index = 2
-    if len(frame_cells) <= row_index or not frame_cells[row_index]:
-        return None
-    row = frame_cells[row_index]
-    _, _, x0, x1 = ENERGY_HUD_RECT
-    row_len = len(row)
-    if row_len <= x0:
-        return None
-    upper_x = min(row_len - 1, x1)
+    if mask:
+        height = len(frame)
+        mask_ranges_by_row: dict[int, list[tuple[int, int]]] = {}
+        for raw_y0, raw_y1, raw_x0, raw_x1 in mask:
+            if height == 0:
+                break
+            y0 = max(0, min(height - 1, raw_y0))
+            y1 = max(0, min(height - 1, raw_y1))
+            if y1 < y0:
+                continue
+            for y in range(y0, y1 + 1):
+                row_len = len(frame[y])
+                if row_len == 0:
+                    continue
+                x0 = max(0, min(row_len - 1, raw_x0))
+                x1 = max(0, min(row_len - 1, raw_x1))
+                if x1 < x0:
+                    continue
+                mask_ranges_by_row.setdefault(y, []).append((x0, x1))
+    else:
+        mask_ranges_by_row = {}
 
-    blocks: list[int] = []
-    for x in range(x0, upper_x + 1, 2):
-        value = row[x]
-        if value in (3, 15):
-            blocks.append(value)
-        elif blocks:
-            break
+    normalized: list[tuple[int, ...]] = []
+    for y, row in enumerate(frame):
+        ranges = mask_ranges_by_row.get(y)
+        normalized_row = []
+        if ranges:
+            for x, cell in enumerate(row):
+                if any(x0 <= x <= x1 for x0, x1 in ranges):
+                    normalized_row.append(0)
+                else:
+                    normalized_row.append(cell)
+        else:
+            normalized_row.extend(row)
+        normalized.append(tuple(normalized_row))
 
-    total = len(blocks)
-    if total < 6:
-        values = {row[x] for x in range(x0, upper_x + 1, 2)}
-        if values == {8} and capacity_hint:
-            return EnergyHudMeasurement(
-                filled_blocks=0,
-                capacity=capacity_hint,
-                rect=ENERGY_HUD_RECT,
-            )
-        return None
-
-    if any(v not in (3, 15) for v in blocks):
-        return None
-
-    filled = sum(1 for v in blocks if v == 15)
-    return EnergyHudMeasurement(
-        filled_blocks=filled,
-        capacity=total,
-        rect=ENERGY_HUD_RECT,
-    )
-
-
-USER_ABSTRACTIONS: list[tuple[str, AbstractionDetector]] = [
-    # Add new abstractions here: provide a (name, detector) pair. Detectors must
-    # accept the frame and return either a structured result or None.
-    ("player", detect_player),
-]
+    return FrameHash(hash(tuple(normalized)))
 
 
 @dataclass(frozen=True)
@@ -302,7 +241,7 @@ class AbstractionNavigator(Agent):
         energy_measurement = measure_energy_blocks(
             frame, capacity_hint=self.energy_capacity
         )
-        frame_hash = self._hash_frame(frame)
+        frame_hash = hash_frame(frame, mask=FRAME_HASH_MASK)
         abstraction = FrameAbstraction(frame_hash=frame_hash, frame=frame)
         if energy_measurement is not None:
             self.energy_capacity = energy_measurement.capacity
@@ -440,41 +379,6 @@ class AbstractionNavigator(Agent):
             logger.error(message)
             raise ValueError(message)
 
-    def _hash_frame(self, frame_cells: Frame) -> FrameHash:
-        """
-        Return a hash of the frame ignoring the HUD rectangle.
-
-        The HUD is treated as adversarial noise: masking it collapses states that only
-        differ by score rendering into a single identifier, keeping the graph stable.
-        """
-        if not frame_cells:
-            return FrameHash(0)
-        normalized = []
-        raw_y0, raw_y1, raw_x0, raw_x1 = ENERGY_HUD_RECT
-        max_y = len(frame_cells) - 1
-        if max_y >= 0:
-            y0 = max(0, min(max_y, raw_y0))
-            y1 = max(0, min(max_y, raw_y1))
-        else:
-            y0 = y1 = 0
-        for y, row in enumerate(frame_cells):
-            normalized_row = []
-            row_len = len(row)
-            if row_len > 0:
-                x0 = max(0, min(row_len - 1, raw_x0))
-                x1 = max(0, min(row_len - 1, raw_x1))
-            else:
-                x0 = 0
-                x1 = -1
-            for x, cell in enumerate(row):
-                if y0 <= y <= y1 and x0 <= x <= x1:
-                    normalized_row.append(0)
-                else:
-                    normalized_row.append(cell)
-            normalized.append(tuple(normalized_row))
-        return FrameHash(hash(tuple(normalized)))
-
-
     def _handle_level_change(self, snapshot: NavigatorSnapshot) -> None:
         self.current_level = snapshot.score
         self._pending_level_score = snapshot.score
@@ -496,3 +400,124 @@ class AbstractionNavigator(Agent):
             self.current_level,
             self.action_counter,
         )
+
+
+# ---------------------------------------------------------------------------
+# Game-specific abstractions (ls20)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BoundingBox:
+    min_y: int
+    max_y: int
+    min_x: int
+    max_x: int
+
+    @property
+    def height(self) -> int:
+        return self.max_y - self.min_y + 1
+
+    @property
+    def width(self) -> int:
+        return self.max_x - self.min_x + 1
+
+
+@dataclass(frozen=True)
+class PlayerDetection:
+    """Detect the ls20 avatar sprite footprint."""
+
+    center: tuple[float, float]
+    pixel_count: int
+    bbox: BoundingBox
+
+
+def detect_player(frame_cells: Frame) -> Optional[PlayerDetection]:
+    positions: list[tuple[int, int]] = []
+    for y, row in enumerate(frame_cells):
+        for x, cell in enumerate(row):
+            if cell == 12:
+                positions.append((y, x))
+
+    if not positions or len(positions) > 256:
+        return None
+
+    min_y = min(y for y, _ in positions)
+    max_y = max(y for y, _ in positions)
+    min_x = min(x for _, x in positions)
+    max_x = max(x for _, x in positions)
+
+    height = max_y - min_y + 1
+    width = max_x - min_x + 1
+    if height > 16 or width > 16:
+        return None
+
+    total_y = sum(y for y, _ in positions)
+    total_x = sum(x for _, x in positions)
+    count = len(positions)
+    center = (total_y / count, total_x / count)
+
+    bbox = BoundingBox(
+        min_y=min_y,
+        max_y=max_y,
+        min_x=min_x,
+        max_x=max_x,
+    )
+    return PlayerDetection(center=center, pixel_count=count, bbox=bbox)
+
+
+ENERGY_HUD_MASK: tuple[MaskRect, ...] = ((1, 2, 2, 45),)
+FRAME_HASH_MASK: FrameMask = ENERGY_HUD_MASK
+
+
+def measure_energy_blocks(
+    frame: Frame, *, capacity_hint: Optional[int] = None
+) -> Optional[EnergyHudMeasurement]:
+    row_index = 2
+    if len(frame) <= row_index or not frame[row_index]:
+        return None
+
+    row = frame[row_index]
+    _, _, x0, x1 = ENERGY_HUD_MASK[0]
+    row_len = len(row)
+    if row_len <= x0:
+        return None
+    upper_x = min(row_len - 1, x1)
+
+    blocks: list[int] = []
+    for x in range(x0, upper_x + 1, 2):
+        value = row[x]
+        if value in (3, 15):
+            blocks.append(value)
+        elif blocks:
+            break
+
+    total = len(blocks)
+    if total < 6:
+        values = {row[x] for x in range(x0, upper_x + 1, 2)}
+        if values == {8} and capacity_hint:
+            return EnergyHudMeasurement(
+                filled_blocks=0,
+                capacity=capacity_hint,
+                rect=ENERGY_HUD_MASK[0],
+            )
+        return None
+
+    if any(v not in (3, 15) for v in blocks):
+        return None
+
+    filled = sum(1 for v in blocks if v == 15)
+    return EnergyHudMeasurement(
+        filled_blocks=filled,
+        capacity=total,
+        rect=ENERGY_HUD_MASK[0],
+    )
+
+
+USER_ABSTRACTIONS.extend(
+    [
+        # Add new abstractions here: provide a (name, detector) pair. Detectors must
+        # accept the frame and return either a structured result or None.
+        ("player", detect_player),
+    ]
+)
