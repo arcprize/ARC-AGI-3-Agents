@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
+from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
 from .abstractions import FrameAbstraction, AbstractionDetector
 from .grid_hash import FrameMask, hash_frame
@@ -50,7 +51,7 @@ class NavigatorSnapshot:
     game_state: GameState
 
 
-class BaseAbstractionNavigator:
+class BaseAbstractionNavigator(Agent):
     """Exploration-focused agent with pluggable, game-specific abstractions.
 
     Provide the following game-specific hooks when constructing:
@@ -63,7 +64,7 @@ class BaseAbstractionNavigator:
         expose an energy HUD, pass a no-op function that returns None.
     """
 
-    MAX_ACTIONS = 100
+    MAX_ACTIONS = 50
     ARROW_ACTIONS = [
         GameAction.ACTION1,  # Up
         GameAction.ACTION2,  # Down
@@ -79,6 +80,9 @@ class BaseAbstractionNavigator:
         measure_energy: Callable[[Frame], Optional[EnergyHudMeasurement]],
         **kwargs: Any,
     ) -> None:
+        # initialise known attributes for type-checker; real values set in Agent.__init__
+        self.game_id = getattr(self, "game_id", "")
+        self.action_counter = getattr(self, "action_counter", 0)
         super().__init__(*args, **kwargs)
         seed = int(time.time() * 1_000_000) ^ hash(self.game_id)
         self.rng = random.Random(seed)
@@ -92,8 +96,13 @@ class BaseAbstractionNavigator:
         self._nfr_planner = NearFrontierPlanner(
             arrow_actions=self.ARROW_ACTIONS,
             state_graph=self.memory.state_graph,
+            unstable_states=getattr(self.memory, "unstable_states", set()),
         )
         self._snapshots: deque[NavigatorSnapshot] = deque(maxlen=3)
+
+    # Hints for the type checker; values are initialised in Agent.__init__
+    game_id: str
+    action_counter: int
 
     @property
     def name(self) -> str:
@@ -119,6 +128,13 @@ class BaseAbstractionNavigator:
 
         # Package raw frame into a snapshot with derived abstractions/state info.
         snapshot = self._create_navigator_snapshot(latest_frame)
+
+        # Avoid exploring from unstable states; prefer reset
+        if snapshot.frame_hash in self.memory.unstable_states:
+            action = GameAction.RESET
+            action.reasoning = "unstable-state-reset"
+            self.last_action = None
+            return action
 
         terminal_target = self.memory.level_terminal_states.get(snapshot.level)
         nfr_action = self._nfr_planner.next_action(
@@ -240,6 +256,8 @@ class BaseAbstractionNavigator:
             or self.last_action is GameAction.RESET
         ):
             return
+        if previous_state_hash in self.memory.unstable_states:
+            return
         self._record_state_transition(
             previous_state_hash, self.last_action, snapshot.frame_hash
         )
@@ -274,8 +292,10 @@ class BaseAbstractionNavigator:
                 f"Non-deterministic transition: state={previous_hash}, "
                 f"action={action.name}, existing_target={existing}, new_target={next_hash}"
             )
-            logger.error(message)
-            raise ValueError(message)
+            logger.warning(message)
+            # Mark origin as unstable to exclude it from future exploration
+            self.memory.unstable_states.add(previous_hash)
+            return
 
     def _handle_level_change(
         self, prev_snapshot: NavigatorSnapshot, snapshot: NavigatorSnapshot

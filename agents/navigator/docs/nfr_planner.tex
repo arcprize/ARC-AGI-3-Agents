@@ -12,59 +12,61 @@
 
 \section{Problem Setting}
 
-Let $\mathcal{G} = (S, A, T)$ denote the agent interaction graph. States $s \in S$ encode masked ARC frames, actions $a \in A$ are constrained to the four arrows, and $T : S \times A \to S \cup \{\bot\}$ is the partial transition function estimated from experience ($\bot$ indicates an unknown successor).
+Let $\mathcal{G} = (S, A, T)$ denote the agent interaction graph. States $s \in S$ encode masked ARC frames, actions $a \in A$ are constrained to a caller-provided navigational action set $A_{\mathrm{nav}} \subseteq A$ (typically the four arrows; the special action $\mathrm{RESET}$ is treated separately), and $T : S \times A \to S \cup \{\bot\}$ is the partial transition function estimated from experience ($\bot$ indicates an unknown successor).
 
-Each play starts at a known level start state $s_0 \in S$. The planner is given:
+Each play starts at a known level start state $s_0 \in S$. The navigator also tracks the current level index $\ell_t$ and stores the terminal state $s_{\mathrm{term}}(\ell)$ whenever a level completion is observed. The planner may be given an optional goal hash $g$ (for example, the current level's recorded terminal state) to prioritise reaching it before resuming generic exploration. The planner is given:
 \begin{itemize}
     \item $S_{\mathrm{disc}} \subseteq S$: discovered states from prior episodes.
     \item $T_{\mathrm{known}} : S_{\mathrm{disc}} \times A \to S_{\mathrm{disc}} \cup \{\bot\}$: the partial transition map recovered from experience (returning $\bot$ when a transition has not yet been seen).
     \item $A(s) \subseteq A$: actions the environment currently allows at state $s$.
-    \item $\mathcal{F} = \{s \in S_{\mathrm{disc}} \mid \exists a \in A(s) : T_{\mathrm{known}}(s,a) = \bot\}$, the \emph{frontier} states whose outgoing edges are incompletely observed.
+    \item $\mathcal{F} = \{\, s \in S_{\mathrm{disc}} \mid s \text{ is not unstable and } \exists a \in A_{\mathrm{nav}} : T_{\mathrm{known}}(s,a) = \bot \,\}$, the \emph{frontier}: discovered, stable states with at least one action in $A_{\mathrm{nav}}$ whose successor is unknown in $T_{\mathrm{known}}$.
 \end{itemize}
 
-During an episode the agent sits in state $s_t$ with available actions $A_t = A(s_t)$. The planner must output $a_t \in A_t \cup \{\mathrm{RESET}\}$ to minimise the distance to a frontier while optionally using reset jumps to $s_0$.
+During an episode the agent sits in state $s_t$ with available actions $A_t = A(s_t)$. The planner must output $a_t \in A_t \cup \{\mathrm{RESET}\}$ to minimise the distance to a frontier while optionally using reset jumps to $s_0$. When a terminal state $s_{\mathrm{term}}(\ell)$ is known for the current level and supplied as \texttt{target\_state}, that state is treated as a temporary goal that can outweigh frontier expansion.
+
+\section{Level-Aware Objectives}
+
+Before evaluating frontier costs, the navigator performs quick goal checks:
+\begin{enumerate}
+    \item \textbf{Current-level replay.} If $s_{\mathrm{term}}(\ell_t)$ is known, the caller supplies \texttt{target\_state} = $s_{\mathrm{term}}(\ell_t)$ to reproduce the previously discovered solution path.
+    \item \textbf{Optional external goal.} If the caller supplies a different goal hash (e.g., a higher-level terminal), the same mechanism steers play toward it until it is reached, after which the planner reverts to generic frontier minimisation.
+\end{enumerate}
+Both checks reuse the distance maps defined below, so the extra computation is negligible.
 
 \section{Algorithm}
 
-\subsection{Definition}
+The planner combines goal-directed replay with frontier exploration. At every decision point it performs the following sequence:
 
-Given the current state $s_t$, the available actions $A_t = A(s_t)$, and the level start state $s_0$, the planner executes:
 \begin{enumerate}
-    \item Run breadth-first search on the known subgraph $\mathcal{G}_t = (S_{\mathrm{disc}}, A, T_{\mathrm{known}})$ from both $s_t$ and $s_0$:
+    \item \textbf{Objective selection.} If a goal state $g$ has been supplied, that state becomes the temporary objective. Otherwise the goal set is the frontier $\mathcal{F}$.
+    \item \textbf{Distance computation.} Run breadth-first search on the discovered subgraph $\mathcal{G}_t = (S_{\mathrm{disc}}, A, T_{\mathrm{known}})$ from both the current state $s_t$ and the level start $s_0$:
     \begin{align}
     \label{eq:bfs-current}
     D_t^{c}, P_t^{c} &= \mathrm{BFS}(\mathcal{G}_t, s_t),\\
     \label{eq:bfs-reset}
     D_t^{0}, P_t^{0} &= \mathrm{BFS}(\mathcal{G}_t, s_0).
     \end{align}
-    Here $D_t^{c}$ and $D_t^{0}$ record shortest-path distances, while the predecessor maps $P_t^{c}$ and $P_t^{0}$ associate each reachable vertex $x$ with the pair $(\mathrm{parent}(x), \mathrm{action}(x))$ describing the final step on the corresponding shortest path.
-    \item Compute the reset-augmented cost for every frontier $f \in \mathcal{F}$:
+    These maps provide shortest-path distances and predecessors inside the known subgraph. Both traversals consider only $A_{\mathrm{nav}}$ edges and exclude states flagged as unstable.
+    \item \textbf{Candidate evaluation.} If a specific goal $g$ was chosen, evaluate it directly: when $g$ is reachable from $s_t$ (i.e. $g \in \mathrm{dom}(D_t^{c})$), follow the path recovered from $P_t^{c}$; otherwise ignore $g$ and proceed with frontier selection. When no goal is set, compute the reset-aware cost for every frontier node as
     \begin{equation}
-    \label{eq:cost}
-    J(f) = \min\{ D_t^{c}(f), 1 + D_t^{0}(f) \}.
+        \label{eq:cost}
+        J(f) = \min\{ D_t^{c}(f), 1 + D_t^{0}(f) \}.
     \end{equation}
-    \item Select the frontier
-    \[
-    f^\star = \arg\min_{f \in \mathcal{F}} \big(J(f), D_t^{0}(f), f\big),
-    \]
-    using lexicographic order on the triple $(J(f), D_t^{0}(f), f)$.
-    \item If $J(f^\star)$ is finite and $A_t$ is non-empty, return
-    \[
-    a_t = \text{first edge on the path recovered from }P_t^{c}\text{ between }s_t\text{ and }f^\star
-    \]
-    when $D_t^{c}(f^\star) \leq 1 + D_t^{0}(f^\star)$, and return $\mathrm{RESET}$ otherwise.
+    Select the candidate with lexicographic order on $(J, D_t^{0}, f)$, breaking ties on $(J, D_t^{0})$ by the canonical frame-hash identifier.
+    \item \textbf{Action selection.} If the chosen candidate is reachable and $A_t$ is non-empty, follow the first edge on the path recovered from $P_t^{c}$ when $D_t^{c}$ is no greater than $1 + D_t^{0}$. Otherwise return $\mathrm{RESET}$, indicating that a jump to $s_0$ plus replay from there is cheaper. When already positioned at the chosen frontier (i.e., the recovered path is empty), execute the first available action in $A_{\mathrm{nav}}$ whose successor is unknown; if none exists, the planner abstains by returning \texttt{None}. When no candidate has finite cost, the planner abstains.
 \end{enumerate}
 
-When $J(f^\star)$ is infinite (no reachable frontier) or $A_t$ is empty, the procedure returns no action.
+The resulting policy naturally alternates between fast replay of known solutions (when a goal state is provided) and systematic exploration of the nearest frontier.
 
-\subsection{Implementation Notes}
+\subsection{Handling Non-Determinism}
 
-The code performs the following additional checks:
+When repeated experience reveals two different successors from the same pair $(s,a)$, the planner treats $s$ as \emph{unstable} and excludes it from subsequent search:
 \begin{itemize}
-    \item If the frontier loop in step 2 yields no finite-cost candidate, the planner abstains and the caller falls back to its default policy.
-    \item If the chosen frontier satisfies $s_t = f^\star$ or the predecessor map does not contain a route, the planner probes the first $a \in A_t$ with $T_{\mathrm{known}}(s_t, a) = \bot$; it abstains when every available action is already known.
-    \item The $\mathrm{RESET}$ branch is triggered only when the inequality $D_t^{c}(f^\star) > 1 + D_t^{0}(f^\star)$ holds, i.e.\ restarting from $s_0$ plus one action is strictly cheaper than moving directly from $s_t$.
+    \item The origin state $s$ is flagged as unstable; unstable states are removed from frontier generation and from the BFS traversals used for distance computation.
+    \item If the agent is currently positioned at an unstable state, the recommended action is $\mathrm{RESET}$ to avoid replaying ambiguous transitions.
+    \item Transitions already recorded for unstable states are left unchanged for inspection; they are simply ignored by the planner.
 \end{itemize}
+This policy prevents ambiguous HUD changes or transient screens from polluting the transition function while keeping the state graph available for analysis.
 
 \section{Desirable Properties}
 
@@ -73,6 +75,8 @@ The code performs the following additional checks:
 \paragraph{Reset Optimality.} The cost \eqref{eq:cost} chooses between continuing from $s_t$ or incurring one reset plus the path from $s_0$. This is optimal under the assumption that resetting teleports to $s_0$ in one step and costs a unit time penalty.
 
 \paragraph{Frontier Prioritisation.} Any frontier with strictly smaller $J(f)$ than all others will eventually be chosen. If exploration uncovers new edges, $J$ automatically updates without retuning.
+
+\paragraph{Level Progression.} Supplying a terminal hash as $\texttt{target\_state}$ enables deterministic replay from the current state when the goal is reachable in the known subgraph; otherwise the planner reverts to frontier search. Reset-versus-continue trade-offs are applied during frontier navigation, not during goal replay.
 
 \paragraph{Idempotence of Known Actions.} The planner never replays an action whose successor is already in $T_{\mathrm{known}}(s_t, a)$ when probing frontiers; thus exploration focuses on unknown transitions.
 

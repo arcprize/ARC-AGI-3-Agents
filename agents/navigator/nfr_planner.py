@@ -16,9 +16,16 @@ logger = logging.getLogger(__name__)
 class NearFrontierPlanner:
     """Compute plans that minimise distance to the nearest unexplored frontier."""
 
-    def __init__(self, arrow_actions: Sequence[GameAction], state_graph: STATE_GRAPH) -> None:
-        self._arrow_actions = arrow_actions
+    def __init__(
+        self,
+        *,
+        arrow_actions: Sequence[GameAction],
+        state_graph: STATE_GRAPH,
+        unstable_states: Optional[set[FrameHash]] = None,
+    ) -> None:
+        self._arrow_actions = list(arrow_actions)
         self._state_graph = state_graph
+        self._unstable: set[FrameHash] = set(unstable_states or set())
 
     def next_action(
         self,
@@ -87,7 +94,7 @@ class NearFrontierPlanner:
             action.reasoning = f"nfr-nav:{action.name.lower()}"
             return action
 
-        # Already at the chosen frontier: probe the first unseen action that is available.
+        # Already at the chosen frontier: probe the first unseen arrow action that is available.
         for action in self._arrow_actions:
             if action not in available_set:
                 continue
@@ -102,13 +109,17 @@ class NearFrontierPlanner:
         states: set[FrameHash] = set(self._state_graph.keys())
         for transition_map in self._state_graph.values():
             states.update(transition_map.transitions.values())
-        return states
+        return {s for s in states if s not in self._unstable}
 
     def _build_adj(self) -> Dict[FrameHash, List[Tuple[FrameHash, GameAction]]]:
         adjacency: Dict[FrameHash, List[Tuple[FrameHash, GameAction]]] = {}
         for state, transition_map in self._state_graph.items():
+            if state in self._unstable:
+                continue
             for action, target in transition_map.transitions.items():
                 if action not in self._arrow_actions:
+                    continue
+                if target in self._unstable:
                     continue
                 adjacency.setdefault(state, []).append((target, action))
         return adjacency
