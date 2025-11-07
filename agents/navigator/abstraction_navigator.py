@@ -115,6 +115,8 @@ class NavigatorSnapshot:
     score: int
     level: int
     energy: Optional[EnergyHudMeasurement]
+    energy_capacity: Optional[int]
+    level_start_state: FrameHash
     available_actions: tuple[GameAction, ...]
     game_state: GameState
 
@@ -132,19 +134,16 @@ class AbstractionNavigator(Agent):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._level_start_state: Optional[FrameHash] = None
         seed = int(time.time() * 1_000_000) ^ hash(self.game_id)
         self.rng = random.Random(seed)
         self.last_action: Optional[GameAction] = None
 
         self.memory: Memory = load_memory(MEMORY_PATH, logger_prefix=self.game_id)
-        self.unique_states_this_run: set[FrameHash] = set()
         self._nfr_planner = NearFrontierPlanner(
             arrow_actions=self.ARROW_ACTIONS,
             state_graph=self.memory.state_graph,
         )
         self._snapshots: deque[NavigatorSnapshot] = deque(maxlen=3)
-        self.energy_capacity: Optional[int] = None
 
     @property
     def name(self) -> str:
@@ -179,13 +178,11 @@ class AbstractionNavigator(Agent):
         current_state = snapshot.frame_hash
         available_actions = list(snapshot.available_actions)
 
-        if self._level_start_state is None:
-            self._level_start_state = current_state
-
+        level_start_state = snapshot.level_start_state
         nfr_action = self._nfr_planner.next_action(
             current_state=current_state,
             available_actions=available_actions,
-            level_start_state=self._level_start_state,
+            level_start_state=level_start_state,
         )
         if nfr_action is None:
             action = GameAction.RESET
@@ -201,9 +198,6 @@ class AbstractionNavigator(Agent):
 
     def _reset_tracking(self) -> None:
         self.last_action = None
-        self.unique_states_this_run.clear()
-        self.energy_capacity = None
-        self._level_start_state = None
         self._snapshots.clear()
 
     def _create_navigator_snapshot(self, frame_data: FrameData) -> Optional[NavigatorSnapshot]:
@@ -212,14 +206,13 @@ class AbstractionNavigator(Agent):
         prev_prev_snapshot = self._snapshots[-2] if len(self._snapshots) >= 2 else None
         frame = frame_data.frame[0]
 
-        energy_measurement = measure_energy_blocks(
-            frame, capacity_hint=self.energy_capacity
-        )
+        capacity_hint = prev_snapshot.energy_capacity if prev_snapshot else None
+        energy_measurement = measure_energy_blocks(frame, capacity_hint=capacity_hint)
         frame_hash = hash_frame(frame, mask=FRAME_HASH_MASK)
         abstraction = FrameAbstraction(frame_hash=frame_hash, frame=frame)
         if energy_measurement is not None:
-            self.energy_capacity = energy_measurement.capacity
             abstraction.add("energy", energy_measurement)
+        energy_capacity = energy_measurement.capacity if energy_measurement else None
 
         for name, detector in USER_ABSTRACTIONS:
             try:
@@ -234,7 +227,7 @@ class AbstractionNavigator(Agent):
             if result is not None:
                 abstraction.add(name, result)
 
-        level = self._infer_level(
+        level, level_start_state = self._infer_level(
             prev_snapshot,
             prev_prev_snapshot,
             score=frame_data.score,
@@ -248,25 +241,22 @@ class AbstractionNavigator(Agent):
             score=frame_data.score,
             level=level,
             energy=energy_measurement,
+            energy_capacity=energy_capacity,
+            level_start_state=level_start_state,
             available_actions=tuple(frame_data.available_actions or ()),
             game_state=frame_data.state,
         )
 
         self._snapshots.append(snapshot)
-        if self._level_start_state is None:
-            self._level_start_state = snapshot.frame_hash
-
         self._update_level_state(prev_snapshot, snapshot)
         self._track_state_graph(prev_snapshot, snapshot)
         return snapshot
 
     def cleanup(self, scorecard: Optional[Any] = None) -> None:
-        states_visited_run = len(self.unique_states_this_run)
         known_states_total = len(self.memory.state_graph)
         logger.info(
-            "%s states visited this run: %d (known total=%d)",
+            "%s known states total=%d",
             self.game_id,
-            states_visited_run,
             known_states_total,
         )
 
@@ -276,9 +266,8 @@ class AbstractionNavigator(Agent):
             recorder=getattr(self, "recorder", None),
             game_id=self.game_id,
             agent_name=self.name,
-            states_visited_run=states_visited_run,
             known_states_total=known_states_total,
-            energy_capacity=self.energy_capacity,
+            energy_capacity=self._snapshots[-1].energy_capacity if self._snapshots else None,
         )
 
         super().cleanup(scorecard)
@@ -319,7 +308,6 @@ class AbstractionNavigator(Agent):
         if record is None:
             record = TransitionMap()
             state_graph[frame_hash] = record
-        self.unique_states_this_run.add(frame_hash)
 
     def _record_state_transition(
         self,
@@ -348,14 +336,17 @@ class AbstractionNavigator(Agent):
             raise ValueError(message)
 
     def _handle_level_change(self, snapshot: NavigatorSnapshot) -> None:
-        self._level_start_state = snapshot.frame_hash
         logger.info(
             "%s level advanced to %d at step %d",
             self.game_id,
             snapshot.level,
             self.action_counter,
         )
-        logger.info("%s level start confirmed at hash=%s", self.game_id, snapshot.frame_hash)
+        logger.info(
+            "%s level start confirmed at hash=%s",
+            self.game_id,
+            snapshot.level_start_state,
+        )
 
     def _infer_level(
         self,
@@ -364,18 +355,21 @@ class AbstractionNavigator(Agent):
         *,
         score: int,
         frame_hash: FrameHash,
-    ) -> int:
+    ) -> tuple[int, FrameHash]:
         if prev_snapshot is None:
-            return score
+            return score, frame_hash
 
         level = prev_snapshot.level
+        level_start_state = prev_snapshot.level_start_state
         if (
             prev_prev_snapshot is not None
             and prev_snapshot.score != prev_prev_snapshot.score
+            and score == prev_snapshot.score
             and frame_hash != prev_snapshot.frame_hash
         ):
             level = prev_snapshot.level + 1
-        return level
+            level_start_state = frame_hash
+        return level, level_start_state
 
 
 # ---------------------------------------------------------------------------

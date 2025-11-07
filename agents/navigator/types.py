@@ -127,7 +127,6 @@ def persist_metrics(
     recorder: Any,
     game_id: str,
     agent_name: str,
-    states_visited_run: int,
     known_states_total: int,
     energy_capacity: Optional[int],
 ) -> None:
@@ -138,7 +137,6 @@ def persist_metrics(
     payload = {
         "game_id": game_id,
         "agent": agent_name,
-        "states_visited_run": states_visited_run,
         "known_states_total": known_states_total,
         "energy_capacity": energy_capacity,
     }
