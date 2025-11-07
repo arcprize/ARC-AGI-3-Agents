@@ -6,7 +6,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping, NewType, Optional, Tuple
+from typing import Any, Dict, Mapping, NewType, Optional, Tuple, Sequence
 
 from ..structs import GameAction
 
@@ -19,21 +19,32 @@ Frame = list[list[Any]]
 
 @dataclass(frozen=True)
 class EnergyHudMeasurement:
-    """Structured representation of the HUD energy bar."""
+    """Structured representation of an energy HUD value.
 
-    filled_blocks: int
+    The energy is represented as a non-negative integer `value` with an
+    optional `capacity` upper bound and a single HUD bounding rectangle `rect`.
+    If the HUD spans disjoint regions, store the minimal bounding rectangle here
+    and enumerate all HUD rectangles in the frame hashing mask.
+    """
+
+    value: int
     capacity: int
-    rect: Tuple[int, int, int, int]
+    regions: Sequence[Tuple[int, int, int, int]]
 
     @property
     def empty_blocks(self) -> int:
-        return max(self.capacity - self.filled_blocks, 0)
+        return max(self.capacity - self.value, 0)
 
     @property
     def fill_ratio(self) -> float:
         if self.capacity == 0:
             return 0.0
-        return self.filled_blocks / self.capacity
+        return self.value / self.capacity
+
+    # Backwards compatibility: expose `filled_blocks` as an alias for `value`.
+    @property
+    def filled_blocks(self) -> int:
+        return self.value
 
 
 @dataclass

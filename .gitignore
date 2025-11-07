@@ -20,3 +20,6 @@ tests/recordings/not-a-recording.txt
 # Long-term memory
 memory.db
 *.aux
+
+# Lockfiles
+uv.lock

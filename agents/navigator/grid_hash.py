@@ -1,4 +1,10 @@
-"""Compact grid hashing utilities for navigator modules."""
+"""Compact grid hashing utilities for navigator modules.
+
+Mask semantics:
+  - `FrameMask` is a sequence of rectangles `(y0, y1, x0, x1)`.
+  - When hashing, masked regions are zeroed out so UI (e.g., energy HUD)
+    rendering does not affect state identity.
+"""
 
 from __future__ import annotations
 
