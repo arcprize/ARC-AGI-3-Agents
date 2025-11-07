@@ -187,9 +187,7 @@ class AbstractionNavigator(Agent):
             raise NotImplementedError("Navigator TODO mode is a placeholder")
 
         # Observe and update discovered graph / level / HUD.
-        self._observe(latest_frame)
-
-        snapshot = self._snapshot
+        snapshot = self._create_navigator_snapshot(latest_frame)
         if snapshot is None:
             action = GameAction.RESET
             action.reasoning = "no-state-reset"
@@ -231,13 +229,11 @@ class AbstractionNavigator(Agent):
         self._pending_level_score = None
         self._pending_level_hash = None
 
-    def _observe(self, frame_data: FrameData) -> None:
-        if frame_data.is_empty() or not frame_data.frame:
-            return
+    def _create_navigator_snapshot(self, frame_data: FrameData) -> Optional[NavigatorSnapshot]:
 
         prev_snapshot = self._snapshot
-
         frame = frame_data.frame[0]
+
         energy_measurement = measure_energy_blocks(
             frame, capacity_hint=self.energy_capacity
         )
@@ -272,47 +268,12 @@ class AbstractionNavigator(Agent):
 
         self._prev_snapshot = prev_snapshot
         self._snapshot = snapshot
-
         if self._level_start_state is None:
             self._level_start_state = snapshot.frame_hash
 
-        level_changed = (
-            prev_snapshot is not None and snapshot.score != prev_snapshot.score
-        )
-
-        if level_changed:
-            self._handle_level_change(snapshot)
-        elif (
-            self._pending_level_score is not None
-            and snapshot.score == self._pending_level_score
-            and snapshot.frame_hash != self._pending_level_hash
-        ):
-            self._level_start_state = snapshot.frame_hash
-            self._pending_level_score = None
-            self._pending_level_hash = None
-            logger.info("%s level start confirmed at hash=%s", self.game_id, frame_hash)
-        elif (
-            self._pending_level_score is not None
-            and snapshot.score != self._pending_level_score
-        ):
-            # Score shifted again before confirmation; drop the pending record.
-            self._pending_level_score = None
-            self._pending_level_hash = None
-
-        abstraction.add("level", snapshot.score)
-        self.current_level = snapshot.score
-
-        self._record_state_visit(snapshot.frame_hash)
-
-        previous_state_hash = prev_snapshot.frame_hash if prev_snapshot else None
-        if (
-            previous_state_hash is not None
-            and self.last_action
-            and self.last_action is not GameAction.RESET
-        ):
-            self._record_state_transition(
-                previous_state_hash, self.last_action, snapshot.frame_hash
-            )
+        self._update_level_state(prev_snapshot, snapshot)
+        self._track_state_graph(prev_snapshot, snapshot)
+        return snapshot
 
     def cleanup(self, scorecard: Optional[Any] = None) -> None:
         states_visited_run = len(self.unique_states_this_run)
@@ -344,6 +305,59 @@ class AbstractionNavigator(Agent):
         )
 
         super().cleanup(scorecard)
+
+    def _update_level_state(
+        self,
+        prev_snapshot: Optional[NavigatorSnapshot],
+        snapshot: NavigatorSnapshot,
+    ) -> None:
+        level_changed = (
+            prev_snapshot is not None and snapshot.score != prev_snapshot.score
+        )
+
+        if level_changed:
+            self._handle_level_change(snapshot)
+        elif (
+            self._pending_level_score is not None
+            and snapshot.score == self._pending_level_score
+            and snapshot.frame_hash != self._pending_level_hash
+        ):
+            self._level_start_state = snapshot.frame_hash
+            self._pending_level_score = None
+            self._pending_level_hash = None
+            logger.info(
+                "%s level start confirmed at hash=%s",
+                self.game_id,
+                snapshot.frame_hash,
+            )
+        elif (
+            self._pending_level_score is not None
+            and snapshot.score != self._pending_level_score
+        ):
+            # Score shifted again before confirmation; drop the pending record.
+            self._pending_level_score = None
+            self._pending_level_hash = None
+
+        snapshot.abstraction.add("level", snapshot.score)
+        self.current_level = snapshot.score
+
+    def _track_state_graph(
+        self,
+        prev_snapshot: Optional[NavigatorSnapshot],
+        snapshot: NavigatorSnapshot,
+    ) -> None:
+        self._record_state_visit(snapshot.frame_hash)
+
+        previous_state_hash = prev_snapshot.frame_hash if prev_snapshot else None
+        if (
+            previous_state_hash is None
+            or not self.last_action
+            or self.last_action is GameAction.RESET
+        ):
+            return
+        self._record_state_transition(
+            previous_state_hash, self.last_action, snapshot.frame_hash
+        )
 
     def _record_state_visit(self, frame_hash: FrameHash) -> None:
         state_graph = self.memory.state_graph
