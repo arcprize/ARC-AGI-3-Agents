@@ -72,20 +72,51 @@ class Memory:
     """Persistent navigation memory retained across runs."""
 
     state_graph: STATE_GRAPH = field(default_factory=dict)
+    level_terminal_states: Dict[int, FrameHash] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Dict[str, int]]:
-        return {str(state_hash): record.to_dict() for state_hash, record in self.state_graph.items()}
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "state_graph": {
+                str(state_hash): record.to_dict()
+                for state_hash, record in self.state_graph.items()
+            },
+            "terminal_states": {
+                str(level): int(state_hash)
+                for level, state_hash in self.level_terminal_states.items()
+            },
+        }
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Mapping[str, int]]) -> "Memory":
+    def from_dict(cls, payload: Mapping[str, Any]) -> "Memory":
         memory = cls()
-        for hash_str, transitions in payload.items():
-            try:
-                state_hash = FrameHash(int(hash_str))
-            except (TypeError, ValueError):
-                logger.warning("Skipping invalid state id in memory payload: %s", hash_str)
-                continue
-            memory.state_graph[state_hash] = TransitionMap.from_dict(transitions)
+        state_graph_payload = payload.get("state_graph", payload)
+        if isinstance(state_graph_payload, Mapping):
+            for hash_str, transitions in state_graph_payload.items():
+                try:
+                    state_hash = FrameHash(int(hash_str))
+                except (TypeError, ValueError):
+                    logger.warning("Skipping invalid state id in memory payload: %s", hash_str)
+                    continue
+                if not isinstance(transitions, Mapping):
+                    logger.warning(
+                        "Skipping state %s because transitions map is missing or malformed",
+                        hash_str,
+                    )
+                    continue
+                memory.state_graph[state_hash] = TransitionMap.from_dict(transitions)
+        terminal_payload = payload.get("terminal_states", {})
+        if isinstance(terminal_payload, Mapping):
+            for level_str, raw_state in terminal_payload.items():
+                try:
+                    level = int(level_str)
+                    memory.level_terminal_states[level] = FrameHash(int(raw_state))
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Skipping invalid terminal entry %s -> %s",
+                        level_str,
+                        raw_state,
+                    )
+                    continue
         return memory
 
 

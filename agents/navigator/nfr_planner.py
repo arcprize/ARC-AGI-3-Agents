@@ -26,6 +26,7 @@ class NearFrontierPlanner:
         current_state: FrameHash,
         available_actions: Sequence[GameAction],
         level_start_state: FrameHash,
+        target_state: Optional[FrameHash] = None,
     ) -> Optional[GameAction]:
 
         available_set = set(available_actions)
@@ -37,6 +38,13 @@ class NearFrontierPlanner:
 
         dist_c, prev_c = self._bfs(adj, current_state)
         dist_s0, prev_s0 = self._bfs(adj, s0)
+
+        if target_state is not None and target_state in dist_c:
+            terminal_path = self._recover_path(prev_c, current_state, target_state)
+            if terminal_path:
+                action = terminal_path[0]
+                action.reasoning = f"nfr-terminal:{action.name.lower()}"
+                return action
 
         INF = 10**9
         best: Optional[Tuple[int, int, FrameHash]] = None

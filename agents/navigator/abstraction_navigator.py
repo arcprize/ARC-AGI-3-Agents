@@ -170,10 +170,12 @@ class AbstractionNavigator(Agent):
         # Package raw frame into a snapshot with derived abstractions/state info.
         snapshot = self._create_navigator_snapshot(latest_frame)
 
+        terminal_target = self.memory.level_terminal_states.get(snapshot.level)
         nfr_action = self._nfr_planner.next_action(
             current_state=snapshot.frame_hash,
             available_actions=snapshot.available_actions,
             level_start_state=snapshot.level_start_state,
+            target_state=terminal_target,
         )
         if nfr_action is None:
             action = GameAction.RESET
@@ -272,8 +274,8 @@ class AbstractionNavigator(Agent):
             prev_snapshot is not None and snapshot.level != prev_snapshot.level
         )
 
-        if level_changed:
-            self._handle_level_change(snapshot)
+        if level_changed and prev_snapshot is not None:
+            self._handle_level_change(prev_snapshot, snapshot)
 
     def _track_state_graph(
         self,
@@ -326,7 +328,12 @@ class AbstractionNavigator(Agent):
             logger.error(message)
             raise ValueError(message)
 
-    def _handle_level_change(self, snapshot: NavigatorSnapshot) -> None:
+    def _handle_level_change(
+        self, prev_snapshot: NavigatorSnapshot, snapshot: NavigatorSnapshot
+    ) -> None:
+        level_completed = prev_snapshot.level
+        terminal_hash = prev_snapshot.frame_hash
+        self.memory.level_terminal_states[level_completed] = terminal_hash
         logger.info(
             "%s level advanced to %d at step %d",
             self.game_id,
@@ -337,6 +344,12 @@ class AbstractionNavigator(Agent):
             "%s level start confirmed at hash=%s",
             self.game_id,
             snapshot.level_start_state,
+        )
+        logger.info(
+            "%s recorded terminal state for level %d: %s",
+            self.game_id,
+            level_completed,
+            terminal_hash,
         )
 
     def _infer_level(
