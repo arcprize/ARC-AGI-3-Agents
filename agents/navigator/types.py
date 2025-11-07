@@ -6,7 +6,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, NewType, Optional, Tuple, TypedDict
+from typing import Any, Dict, Mapping, NewType, Optional, Tuple
 
 from ..structs import GameAction
 
@@ -15,14 +15,6 @@ logger = logging.getLogger(__name__)
 FrameHash = NewType("FrameHash", int)
 
 Frame = list[list[Any]]
-
-
-class LevelEvent(TypedDict):
-    level: int
-    step: int
-    state_hash: int
-    energy: int
-    timestamp: float
 
 
 @dataclass(frozen=True)
@@ -138,7 +130,6 @@ def persist_metrics(
     states_visited_run: int,
     known_states_total: int,
     energy_capacity: Optional[int],
-    level_events: List[LevelEvent],
 ) -> None:
     if not recorder or not getattr(recorder, "filename", None):
         return
@@ -150,7 +141,6 @@ def persist_metrics(
         "states_visited_run": states_visited_run,
         "known_states_total": known_states_total,
         "energy_capacity": energy_capacity,
-        "level_events": level_events,
     }
     with target_path.open("w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)

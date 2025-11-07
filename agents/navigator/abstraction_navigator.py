@@ -25,7 +25,6 @@ from .types import (
     EnergyHudMeasurement,
     Frame,
     FrameHash,
-    LevelEvent,
     Memory,
     TransitionMap,
     load_memory,
@@ -146,7 +145,6 @@ class AbstractionNavigator(Agent):
         )
         self._snapshots: deque[NavigatorSnapshot] = deque(maxlen=3)
         self.energy_capacity: Optional[int] = None
-        self.level_events: list[LevelEvent] = []
 
     @property
     def name(self) -> str:
@@ -205,7 +203,6 @@ class AbstractionNavigator(Agent):
         self.last_action = None
         self.unique_states_this_run.clear()
         self.energy_capacity = None
-        self.level_events = []
         self._level_start_state = None
         self._snapshots.clear()
 
@@ -273,13 +270,6 @@ class AbstractionNavigator(Agent):
             known_states_total,
         )
 
-        if self.level_events:
-            logger.info(
-                "%s level transitions: %s",
-                self.game_id,
-                self.level_events,
-            )
-
         save_memory(self.memory, MEMORY_PATH)
 
         persist_metrics(
@@ -289,7 +279,6 @@ class AbstractionNavigator(Agent):
             states_visited_run=states_visited_run,
             known_states_total=known_states_total,
             energy_capacity=self.energy_capacity,
-            level_events=self.level_events,
         )
 
         super().cleanup(scorecard)
@@ -360,16 +349,6 @@ class AbstractionNavigator(Agent):
 
     def _handle_level_change(self, snapshot: NavigatorSnapshot) -> None:
         self._level_start_state = snapshot.frame_hash
-        event: LevelEvent = {
-            "level": snapshot.level,
-            "step": self.action_counter,
-            "state_hash": snapshot.frame_hash,
-            "energy": snapshot.energy.filled_blocks if snapshot.energy else 0,
-            "timestamp": time.time(),
-        }
-
-        self.level_events.append(event)
-        snapshot.abstraction.add("level_transition", event)
         logger.info(
             "%s level advanced to %d at step %d",
             self.game_id,
