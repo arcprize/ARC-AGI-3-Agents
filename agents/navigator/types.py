@@ -12,7 +12,7 @@ from ..structs import GameAction
 
 logger = logging.getLogger(__name__)
 
-FrameHash = NewType("FrameHash", int)
+FrameHash = NewType("FrameHash", str)
 
 Frame = list[list[Any]]
 
@@ -42,18 +42,18 @@ class TransitionMap:
 
     transitions: Dict[GameAction, FrameHash] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, int]:
-        return {action.name: int(target) for action, target in self.transitions.items()}
+    def to_dict(self) -> Dict[str, str]:
+        return {action.name: str(target) for action, target in self.transitions.items()}
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, int]) -> "TransitionMap":
+    def from_dict(cls, payload: Mapping[str, Any]) -> "TransitionMap":
         transitions: Dict[GameAction, FrameHash] = {}
         for action_name, raw in payload.items():
             if action_name not in GameAction.__members__:
                 logger.warning("Skipping unknown action in memory payload: %s", action_name)
                 continue
             try:
-                transitions[GameAction[action_name]] = FrameHash(int(raw))
+                transitions[GameAction[action_name]] = FrameHash(str(raw))
             except (TypeError, ValueError):
                 logger.warning(
                     "Skipping transition for action %s due to invalid target %s",
@@ -81,7 +81,7 @@ class Memory:
                 for state_hash, record in self.state_graph.items()
             },
             "terminal_states": {
-                str(level): int(state_hash)
+                str(level): str(state_hash)
                 for level, state_hash in self.level_terminal_states.items()
             },
         }
@@ -93,7 +93,7 @@ class Memory:
         if isinstance(state_graph_payload, Mapping):
             for hash_str, transitions in state_graph_payload.items():
                 try:
-                    state_hash = FrameHash(int(hash_str))
+                    state_hash = FrameHash(str(hash_str))
                 except (TypeError, ValueError):
                     logger.warning("Skipping invalid state id in memory payload: %s", hash_str)
                     continue
@@ -109,7 +109,7 @@ class Memory:
             for level_str, raw_state in terminal_payload.items():
                 try:
                     level = int(level_str)
-                    memory.level_terminal_states[level] = FrameHash(int(raw_state))
+                    memory.level_terminal_states[level] = FrameHash(str(raw_state))
                 except (TypeError, ValueError):
                     logger.warning(
                         "Skipping invalid terminal entry %s -> %s",

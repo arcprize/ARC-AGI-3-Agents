@@ -9,7 +9,9 @@ Update cycle:
   4. Re-run, rinse, repeat—commit once a new abstraction proves useful.
 """
 
+import hashlib
 import logging
+import os
 import random
 import time
 from collections import deque
@@ -59,12 +61,33 @@ FrameMask = Sequence[MaskRect]
 # Game-specific detectors extend this list near the bottom of the file.
 USER_ABSTRACTIONS: list[tuple[str, AbstractionDetector]] = []
 
+HASH_DELIMITER = b"\x00"
+DEFAULT_HASH_CHARS = 6
+try:
+    HASH_ID_CHARS = max(4, min(64, int(os.getenv("NAVIGATOR_HASH_CHARS", DEFAULT_HASH_CHARS))))
+except ValueError:
+    HASH_ID_CHARS = DEFAULT_HASH_CHARS
+
+def _cell_to_int(cell: Any) -> int:
+    if isinstance(cell, int):
+        return cell
+    if isinstance(cell, list) and cell:
+        first = cell[0]
+        if isinstance(first, int):
+            return first
+    return 0
+
+
+def _hash_rows(rows: list[list[int]]) -> FrameHash:
+    digest_bytes = max(4, (HASH_ID_CHARS + 1) // 2)
+    hasher = hashlib.blake2s(digest_size=digest_bytes)
+    for row in rows:
+        hasher.update(bytes((value & 0xFF) for value in row))
+        hasher.update(HASH_DELIMITER)
+    return FrameHash(hasher.hexdigest()[:HASH_ID_CHARS])
 
 def hash_frame(frame: Frame, *, mask: Optional[FrameMask] = None) -> FrameHash:
     """Return a hash of the frame with the masked regions zeroed out."""
-
-    if not frame:
-        return FrameHash(0)
 
     if mask:
         height = len(frame)
@@ -88,7 +111,7 @@ def hash_frame(frame: Frame, *, mask: Optional[FrameMask] = None) -> FrameHash:
     else:
         mask_ranges_by_row = {}
 
-    normalized: list[tuple[int, ...]] = []
+    normalized: list[list[int]] = []
     for y, row in enumerate(frame):
         ranges = mask_ranges_by_row.get(y)
         normalized_row = []
@@ -97,12 +120,12 @@ def hash_frame(frame: Frame, *, mask: Optional[FrameMask] = None) -> FrameHash:
                 if any(x0 <= x <= x1 for x0, x1 in ranges):
                     normalized_row.append(0)
                 else:
-                    normalized_row.append(cell)
+                    normalized_row.append(_cell_to_int(cell))
         else:
-            normalized_row.extend(row)
-        normalized.append(tuple(normalized_row))
+            normalized_row.extend(_cell_to_int(cell) for cell in row)
+        normalized.append(normalized_row)
 
-    return FrameHash(hash(tuple(normalized)))
+    return _hash_rows(normalized)
 
 
 @dataclass(frozen=True)
