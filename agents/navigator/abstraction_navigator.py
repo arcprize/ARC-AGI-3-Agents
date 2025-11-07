@@ -361,7 +361,7 @@ class AbstractionNavigator(Agent):
         frame_hash: FrameHash,
     ) -> tuple[int, FrameHash]:
         if prev_snapshot is None:
-            return score, frame_hash
+            return 1, frame_hash
 
         level = prev_snapshot.level
         level_start_state = prev_snapshot.level_start_state
