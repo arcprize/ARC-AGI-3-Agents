@@ -12,6 +12,7 @@ Update cycle:
 import logging
 import random
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -113,6 +114,7 @@ class NavigatorSnapshot:
     abstraction: FrameAbstraction
     frame_hash: FrameHash
     score: int
+    level: int
     energy: Optional[EnergyHudMeasurement]
     available_actions: tuple[GameAction, ...]
     game_state: GameState
@@ -142,13 +144,8 @@ class AbstractionNavigator(Agent):
             arrow_actions=self.ARROW_ACTIONS,
             state_graph=self.memory.state_graph,
         )
-        self._snapshot: Optional[NavigatorSnapshot] = None
-        self._prev_snapshot: Optional[NavigatorSnapshot] = None
-        self._pending_level_score: Optional[int] = None
-        self._pending_level_hash: Optional[FrameHash] = None
-
+        self._snapshots: deque[NavigatorSnapshot] = deque(maxlen=3)
         self.energy_capacity: Optional[int] = None
-        self.current_level = 0
         self.level_events: list[LevelEvent] = []
 
     @property
@@ -208,17 +205,14 @@ class AbstractionNavigator(Agent):
         self.last_action = None
         self.unique_states_this_run.clear()
         self.energy_capacity = None
-        self.current_level = 0
         self.level_events = []
         self._level_start_state = None
-        self._snapshot = None
-        self._prev_snapshot = None
-        self._pending_level_score = None
-        self._pending_level_hash = None
+        self._snapshots.clear()
 
     def _create_navigator_snapshot(self, frame_data: FrameData) -> Optional[NavigatorSnapshot]:
 
-        prev_snapshot = self._snapshot
+        prev_snapshot = self._snapshots[-1] if self._snapshots else None
+        prev_prev_snapshot = self._snapshots[-2] if len(self._snapshots) >= 2 else None
         frame = frame_data.frame[0]
 
         energy_measurement = measure_energy_blocks(
@@ -243,18 +237,25 @@ class AbstractionNavigator(Agent):
             if result is not None:
                 abstraction.add(name, result)
 
+        level = self._infer_level(
+            prev_snapshot,
+            prev_prev_snapshot,
+            score=frame_data.score,
+            frame_hash=frame_hash,
+        )
+
         snapshot = NavigatorSnapshot(
             frame=frame_data,
             abstraction=abstraction,
             frame_hash=frame_hash,
             score=frame_data.score,
+            level=level,
             energy=energy_measurement,
             available_actions=tuple(frame_data.available_actions or ()),
             game_state=frame_data.state,
         )
 
-        self._prev_snapshot = prev_snapshot
-        self._snapshot = snapshot
+        self._snapshots.append(snapshot)
         if self._level_start_state is None:
             self._level_start_state = snapshot.frame_hash
 
@@ -299,34 +300,11 @@ class AbstractionNavigator(Agent):
         snapshot: NavigatorSnapshot,
     ) -> None:
         level_changed = (
-            prev_snapshot is not None and snapshot.score != prev_snapshot.score
+            prev_snapshot is not None and snapshot.level != prev_snapshot.level
         )
 
         if level_changed:
             self._handle_level_change(snapshot)
-        elif (
-            self._pending_level_score is not None
-            and snapshot.score == self._pending_level_score
-            and snapshot.frame_hash != self._pending_level_hash
-        ):
-            self._level_start_state = snapshot.frame_hash
-            self._pending_level_score = None
-            self._pending_level_hash = None
-            logger.info(
-                "%s level start confirmed at hash=%s",
-                self.game_id,
-                snapshot.frame_hash,
-            )
-        elif (
-            self._pending_level_score is not None
-            and snapshot.score != self._pending_level_score
-        ):
-            # Score shifted again before confirmation; drop the pending record.
-            self._pending_level_score = None
-            self._pending_level_hash = None
-
-        snapshot.abstraction.add("level", snapshot.score)
-        self.current_level = snapshot.score
 
     def _track_state_graph(
         self,
@@ -381,12 +359,9 @@ class AbstractionNavigator(Agent):
             raise ValueError(message)
 
     def _handle_level_change(self, snapshot: NavigatorSnapshot) -> None:
-        self.current_level = snapshot.score
-        self._pending_level_score = snapshot.score
-        self._pending_level_hash = snapshot.frame_hash
-
+        self._level_start_state = snapshot.frame_hash
         event: LevelEvent = {
-            "level": self.current_level,
+            "level": snapshot.level,
             "step": self.action_counter,
             "state_hash": snapshot.frame_hash,
             "energy": snapshot.energy.filled_blocks if snapshot.energy else 0,
@@ -398,9 +373,30 @@ class AbstractionNavigator(Agent):
         logger.info(
             "%s level advanced to %d at step %d",
             self.game_id,
-            self.current_level,
+            snapshot.level,
             self.action_counter,
         )
+        logger.info("%s level start confirmed at hash=%s", self.game_id, snapshot.frame_hash)
+
+    def _infer_level(
+        self,
+        prev_snapshot: Optional[NavigatorSnapshot],
+        prev_prev_snapshot: Optional[NavigatorSnapshot],
+        *,
+        score: int,
+        frame_hash: FrameHash,
+    ) -> int:
+        if prev_snapshot is None:
+            return score
+
+        level = prev_snapshot.level
+        if (
+            prev_prev_snapshot is not None
+            and prev_snapshot.score != prev_prev_snapshot.score
+            and frame_hash != prev_snapshot.frame_hash
+        ):
+            level = prev_snapshot.level + 1
+        return level
 
 
 # ---------------------------------------------------------------------------
