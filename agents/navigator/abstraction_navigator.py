@@ -36,13 +36,6 @@ logger = logging.getLogger()
 
 MEMORY_PATH = Path(__file__).resolve().parent / "memory" / "memory.json"
 
-class NavigatorMode(str, Enum):
-    """Operating modes for the abstraction navigator."""
-
-    EXPLORE = "explore"
-    TODO = "todo"
-
-
 @dataclass
 class FrameAbstraction:
     """In-memory snapshot of a frame enhanced with higher-level abstractions."""
@@ -137,8 +130,6 @@ class AbstractionNavigator(Agent):
     ]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        mode_value = kwargs.pop("mode", NavigatorMode.EXPLORE)
-        self.mode = NavigatorMode(mode_value)
         super().__init__(*args, **kwargs)
         self._level_start_state: Optional[FrameHash] = None
         seed = int(time.time() * 1_000_000) ^ hash(self.game_id)
@@ -182,11 +173,7 @@ class AbstractionNavigator(Agent):
             action.reasoning = "resetting before exploration"
             return action
 
-        if self.mode is NavigatorMode.TODO:
-            logger.info("%s TODO mode: planning logic not yet implemented", self.game_id)
-            raise NotImplementedError("Navigator TODO mode is a placeholder")
-
-        # Observe and update discovered graph / level / HUD.
+        # Package raw frame into a snapshot with derived abstractions/state info.
         snapshot = self._create_navigator_snapshot(latest_frame)
         if snapshot is None:
             action = GameAction.RESET
