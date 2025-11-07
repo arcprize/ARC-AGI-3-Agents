@@ -9,9 +9,7 @@ Update cycle:
   4. Re-run, rinse, repeat—commit once a new abstraction proves useful.
 """
 
-import hashlib
 import logging
-import os
 import random
 import time
 from collections import deque
@@ -22,6 +20,8 @@ from typing import Any, Callable, Optional, Sequence
 
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
+from .abstractions import FrameAbstraction, USER_ABSTRACTIONS, AbstractionDetector, register_abstraction
+from .grid_hash import FrameMask, MaskRect, hash_frame
 from .nfr_planner import NearFrontierPlanner
 from .types import (
     EnergyHudMeasurement,
@@ -38,94 +38,8 @@ logger = logging.getLogger()
 
 MEMORY_PATH = Path(__file__).resolve().parent / "memory" / "memory.json"
 
-@dataclass
-class FrameAbstraction:
-    """In-memory snapshot of a frame enhanced with higher-level abstractions."""
-
-    frame_hash: FrameHash
-    frame: Frame
-    abstractions: dict[str, Any] = field(default_factory=dict)
-
-    def add(self, name: str, value: Any) -> None:
-        self.abstractions[name] = value
-
-    def get(self, name: str) -> Any:
-        return self.abstractions.get(name)
-
-
-AbstractionDetector = Callable[[Frame], Optional[Any]]
-
-MaskRect = tuple[int, int, int, int]
-FrameMask = Sequence[MaskRect]
-
 # Game-specific detectors extend this list near the bottom of the file.
-USER_ABSTRACTIONS: list[tuple[str, AbstractionDetector]] = []
-
-HASH_DELIMITER = b"\x00"
-DEFAULT_HASH_CHARS = 6
-try:
-    HASH_ID_CHARS = max(4, min(64, int(os.getenv("NAVIGATOR_HASH_CHARS", DEFAULT_HASH_CHARS))))
-except ValueError:
-    HASH_ID_CHARS = DEFAULT_HASH_CHARS
-
-def _cell_to_int(cell: Any) -> int:
-    if isinstance(cell, int):
-        return cell
-    if isinstance(cell, list) and cell:
-        first = cell[0]
-        if isinstance(first, int):
-            return first
-    return 0
-
-
-def _hash_rows(rows: list[list[int]]) -> FrameHash:
-    digest_bytes = max(4, (HASH_ID_CHARS + 1) // 2)
-    hasher = hashlib.blake2s(digest_size=digest_bytes)
-    for row in rows:
-        hasher.update(bytes((value & 0xFF) for value in row))
-        hasher.update(HASH_DELIMITER)
-    return FrameHash(hasher.hexdigest()[:HASH_ID_CHARS])
-
-def hash_frame(frame: Frame, *, mask: Optional[FrameMask] = None) -> FrameHash:
-    """Return a hash of the frame with the masked regions zeroed out."""
-
-    if mask:
-        height = len(frame)
-        mask_ranges_by_row: dict[int, list[tuple[int, int]]] = {}
-        for raw_y0, raw_y1, raw_x0, raw_x1 in mask:
-            if height == 0:
-                break
-            y0 = max(0, min(height - 1, raw_y0))
-            y1 = max(0, min(height - 1, raw_y1))
-            if y1 < y0:
-                continue
-            for y in range(y0, y1 + 1):
-                row_len = len(frame[y])
-                if row_len == 0:
-                    continue
-                x0 = max(0, min(row_len - 1, raw_x0))
-                x1 = max(0, min(row_len - 1, raw_x1))
-                if x1 < x0:
-                    continue
-                mask_ranges_by_row.setdefault(y, []).append((x0, x1))
-    else:
-        mask_ranges_by_row = {}
-
-    normalized: list[list[int]] = []
-    for y, row in enumerate(frame):
-        ranges = mask_ranges_by_row.get(y)
-        normalized_row = []
-        if ranges:
-            for x, cell in enumerate(row):
-                if any(x0 <= x <= x1 for x0, x1 in ranges):
-                    normalized_row.append(0)
-                else:
-                    normalized_row.append(_cell_to_int(cell))
-        else:
-            normalized_row.extend(_cell_to_int(cell) for cell in row)
-        normalized.append(normalized_row)
-
-    return _hash_rows(normalized)
+USER_ABSTRACTIONS = USER_ABSTRACTIONS
 
 
 @dataclass(frozen=True)
