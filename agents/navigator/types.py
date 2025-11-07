@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 FrameHash = NewType("FrameHash", int)
 
-Grid = list[list[Any]]
+Frame = list[list[Any]]
 
 
 class LevelEvent(TypedDict):

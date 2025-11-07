@@ -22,8 +22,8 @@ from ..structs import FrameData, GameAction, GameState
 from .nfr_planner import NearFrontierPlanner
 from .types import (
     EnergyHudMeasurement,
+    Frame,
     FrameHash,
-    Grid,
     LevelEvent,
     Memory,
     TransitionMap,
@@ -48,7 +48,7 @@ class FrameAbstraction:
     """In-memory snapshot of a frame enhanced with higher-level abstractions."""
 
     frame_hash: FrameHash
-    grid: Grid
+    frame: Frame
     abstractions: dict[str, Any] = field(default_factory=dict)
 
     def add(self, name: str, value: Any) -> None:
@@ -83,12 +83,12 @@ class PlayerDetection:
     bbox: BoundingBox
 
 
-GridAbstraction = Callable[[Grid], Optional[Any]]
+AbstractionDetector = Callable[[Frame], Optional[Any]]
 
 
-def detect_player(grid: Grid) -> Optional[PlayerDetection]:
+def detect_player(frame_cells: Frame) -> Optional[PlayerDetection]:
     positions: list[tuple[int, int]] = []
-    for y, row in enumerate(grid):
+    for y, row in enumerate(frame_cells):
         for x, cell in enumerate(row):
             if cell == 12:
                 positions.append((y, x))
@@ -124,12 +124,12 @@ ENERGY_HUD_RECT = (1, 2, 2, 45)  # (y0, y1, x0, x1); tuned for ls20 energy bar
 
 
 def measure_energy_blocks(
-    grid: Grid, *, capacity_hint: Optional[int] = None
+    frame_cells: Frame, *, capacity_hint: Optional[int] = None
 ) -> Optional[EnergyHudMeasurement]:
     row_index = 2
-    if len(grid) <= row_index or not grid[row_index]:
+    if len(frame_cells) <= row_index or not frame_cells[row_index]:
         return None
-    row = grid[row_index]
+    row = frame_cells[row_index]
     _, _, x0, x1 = ENERGY_HUD_RECT
     row_len = len(row)
     if row_len <= x0:
@@ -166,9 +166,9 @@ def measure_energy_blocks(
     )
 
 
-USER_ABSTRACTIONS: list[tuple[str, GridAbstraction]] = [
+USER_ABSTRACTIONS: list[tuple[str, AbstractionDetector]] = [
     # Add new abstractions here: provide a (name, detector) pair. Detectors must
-    # accept the grid and return either a structured result or None.
+    # accept the frame and return either a structured result or None.
     ("player", detect_player),
 ]
 
@@ -292,25 +292,25 @@ class AbstractionNavigator(Agent):
         self._pending_level_score = None
         self._pending_level_hash = None
 
-    def _observe(self, frame: FrameData) -> None:
-        if frame.is_empty() or not frame.frame:
+    def _observe(self, frame_data: FrameData) -> None:
+        if frame_data.is_empty() or not frame_data.frame:
             return
 
         prev_snapshot = self._snapshot
 
-        grid = frame.frame[0]
+        frame = frame_data.frame[0]
         energy_measurement = measure_energy_blocks(
-            grid, capacity_hint=self.energy_capacity
+            frame, capacity_hint=self.energy_capacity
         )
-        frame_hash = self._hash_grid(grid)
-        abstraction = FrameAbstraction(frame_hash=frame_hash, grid=grid)
+        frame_hash = self._hash_frame(frame)
+        abstraction = FrameAbstraction(frame_hash=frame_hash, frame=frame)
         if energy_measurement is not None:
             self.energy_capacity = energy_measurement.capacity
             abstraction.add("energy", energy_measurement)
 
         for name, detector in USER_ABSTRACTIONS:
             try:
-                result = detector(grid)
+                result = detector(frame)
             except Exception:
                 logger.exception(
                     "%s abstraction %s failed",
@@ -322,13 +322,13 @@ class AbstractionNavigator(Agent):
                 abstraction.add(name, result)
 
         snapshot = NavigatorSnapshot(
-            frame=frame,
+            frame=frame_data,
             abstraction=abstraction,
             frame_hash=frame_hash,
-            score=frame.score,
+            score=frame_data.score,
             energy=energy_measurement,
-            available_actions=tuple(frame.available_actions or ()),
-            game_state=frame.state,
+            available_actions=tuple(frame_data.available_actions or ()),
+            game_state=frame_data.state,
         )
 
         self._prev_snapshot = prev_snapshot
@@ -440,24 +440,24 @@ class AbstractionNavigator(Agent):
             logger.error(message)
             raise ValueError(message)
 
-    def _hash_grid(self, grid: Grid) -> FrameHash:
+    def _hash_frame(self, frame_cells: Frame) -> FrameHash:
         """
-        Return a hash of the grid ignoring the HUD rectangle.
+        Return a hash of the frame ignoring the HUD rectangle.
 
         The HUD is treated as adversarial noise: masking it collapses states that only
         differ by score rendering into a single identifier, keeping the graph stable.
         """
-        if not grid:
+        if not frame_cells:
             return FrameHash(0)
         normalized = []
         raw_y0, raw_y1, raw_x0, raw_x1 = ENERGY_HUD_RECT
-        max_y = len(grid) - 1
+        max_y = len(frame_cells) - 1
         if max_y >= 0:
             y0 = max(0, min(max_y, raw_y0))
             y1 = max(0, min(max_y, raw_y1))
         else:
             y0 = y1 = 0
-        for y, row in enumerate(grid):
+        for y, row in enumerate(frame_cells):
             normalized_row = []
             row_len = len(row)
             if row_len > 0:
