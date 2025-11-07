@@ -169,12 +169,6 @@ class AbstractionNavigator(Agent):
 
         # Package raw frame into a snapshot with derived abstractions/state info.
         snapshot = self._create_navigator_snapshot(latest_frame)
-        if snapshot is None:
-            action = GameAction.RESET
-            action.reasoning = "no-state-reset"
-            self.last_action = None
-            return action
-
         current_state = snapshot.frame_hash
         available_actions = list(snapshot.available_actions)
 
@@ -200,7 +194,7 @@ class AbstractionNavigator(Agent):
         self.last_action = None
         self._snapshots.clear()
 
-    def _create_navigator_snapshot(self, frame_data: FrameData) -> Optional[NavigatorSnapshot]:
+    def _create_navigator_snapshot(self, frame_data: FrameData) -> NavigatorSnapshot:
 
         prev_snapshot = self._snapshots[-1] if self._snapshots else None
         prev_prev_snapshot = self._snapshots[-2] if len(self._snapshots) >= 2 else None

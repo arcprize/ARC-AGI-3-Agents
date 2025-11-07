@@ -85,12 +85,6 @@ class Memory:
             except (TypeError, ValueError):
                 logger.warning("Skipping invalid state id in memory payload: %s", hash_str)
                 continue
-            if not isinstance(transitions, Mapping):
-                logger.warning(
-                    "Skipping state %s because transitions map is missing or malformed",
-                    hash_str,
-                )
-                continue
             memory.state_graph[state_hash] = TransitionMap.from_dict(transitions)
         return memory
 

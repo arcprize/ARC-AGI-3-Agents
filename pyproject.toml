@@ -36,6 +36,7 @@ agentops = [
 [tool.mypy]
 strict = true
 disallow_untyped_defs = true
+warn_unreachable = true
 exclude = [
     "tests",
     "agents/templates",
