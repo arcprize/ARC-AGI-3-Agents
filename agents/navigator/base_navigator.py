@@ -130,18 +130,15 @@ class BaseAbstractionNavigator(Agent):
 
         prev_snapshot = self._snapshots[-2] if len(self._snapshots) >= 2 else None
 
-        has_transition_overlay, overlay_layer_count = (
-            self._snapshot_transition_overlay_info(snapshot)
-        )
-        score_increased = (
-            prev_snapshot is not None and snapshot.score > prev_snapshot.score
+        should_reset_overlay, overlay_layer_count = (
+            self._should_reset_for_transition_screen(prev_snapshot, snapshot)
         )
 
-        if has_transition_overlay and not score_increased:
+        if should_reset_overlay:
             logger.info(
                 "%s transition overlay detected: layers=%d state=%s score=%s",
                 self.game_id,
-                overlay_layer_count,
+                overlay_layer_count or 0,
                 snapshot.game_state.name,
                 snapshot.score,
             )
@@ -224,6 +221,23 @@ class BaseAbstractionNavigator(Agent):
         self._snapshots.append(snapshot)
         self._update_level_state(prev_snapshot, snapshot)
         return snapshot
+
+    def _should_reset_for_transition_screen(
+        self,
+        prev_snapshot: Optional[NavigatorSnapshot],
+        snapshot: NavigatorSnapshot,
+    ) -> tuple[bool, Optional[int]]:
+        has_overlay, layer_count = self._snapshot_transition_overlay_info(snapshot)
+        if not has_overlay:
+            return False, layer_count
+
+        confirmed_progress = (
+            prev_snapshot is not None and snapshot.score > prev_snapshot.score
+        )
+        if confirmed_progress:
+            return False, layer_count
+
+        return True, layer_count
 
     def _snapshot_transition_overlay_info(
         self, snapshot: NavigatorSnapshot
