@@ -71,6 +71,7 @@ class BaseAbstractionNavigator(Agent):
         GameAction.ACTION3,  # Left
         GameAction.ACTION4,  # Right,
     ]
+    APPARENT_RESTART_PIXEL_CHANGE_THRESHOLD = 0.4
 
     def __init__(
         self,
@@ -111,7 +112,6 @@ class BaseAbstractionNavigator(Agent):
         return any(
             [
                 latest_frame.state is GameState.WIN,
-                latest_frame.state is GameState.GAME_OVER,
                 self.action_counter >= self.MAX_ACTIONS,
             ]
         )
@@ -122,7 +122,11 @@ class BaseAbstractionNavigator(Agent):
         if latest_frame.state in (GameState.NOT_PLAYED, GameState.GAME_OVER):
             self._reset_tracking()
             action = GameAction.RESET
-            action.reasoning = "resetting before exploration"
+            if latest_frame.state is GameState.GAME_OVER:
+                logger.info("%s resetting after game over", self.game_id)
+                action.reasoning = "game-over-reset"
+            else:
+                action.reasoning = "resetting before exploration"
             return action
 
         # Package raw frame into a snapshot with derived abstractions/state info.
@@ -225,6 +229,10 @@ class BaseAbstractionNavigator(Agent):
         if not self._looks_like_transition_screen(snapshot):
             return False
 
+        change_ratio = self._frame_internal_change_ratio(snapshot)
+        if change_ratio < self.APPARENT_RESTART_PIXEL_CHANGE_THRESHOLD:
+            return False
+
         confirmed_progress = (
             prev_snapshot is not None and snapshot.score > prev_snapshot.score
         )
@@ -233,9 +241,7 @@ class BaseAbstractionNavigator(Agent):
 
         return True
 
-    def _looks_like_transition_screen(
-        self, snapshot: NavigatorSnapshot
-    ) -> bool:
+    def _looks_like_transition_screen(self, snapshot: NavigatorSnapshot) -> bool:
         frame_layers = getattr(snapshot.frame, "frame", None)
         if not isinstance(frame_layers, list):
             return False
@@ -245,6 +251,49 @@ class BaseAbstractionNavigator(Agent):
             return False
 
         return True
+
+    def _frame_internal_change_ratio(self, snapshot: NavigatorSnapshot) -> float:
+        layers = getattr(snapshot.frame, "frame", None)
+        if not isinstance(layers, list) or len(layers) < 2:
+            return 0.0
+
+        baseline = layers[0]
+        max_ratio = 0.0
+        for layer in layers[1:]:
+            ratio = self._layer_difference_ratio(baseline, layer)
+            if ratio > max_ratio:
+                max_ratio = ratio
+        return max_ratio
+
+    @staticmethod
+    def _layer_difference_ratio(
+        layer_a: list[list[int]], layer_b: list[list[int]]
+    ) -> float:
+        total_pixels = 0
+        changed_pixels = 0
+
+        max_rows = max(len(layer_a), len(layer_b))
+        for row_idx in range(max_rows):
+            row_a = layer_a[row_idx] if row_idx < len(layer_a) else None
+            row_b = layer_b[row_idx] if row_idx < len(layer_b) else None
+
+            if row_a is None or row_b is None:
+                row = row_a or row_b or []
+                total_pixels += len(row)
+                changed_pixels += len(row)
+                continue
+
+            max_cols = max(len(row_a), len(row_b))
+            for col_idx in range(max_cols):
+                val_a = row_a[col_idx] if col_idx < len(row_a) else None
+                val_b = row_b[col_idx] if col_idx < len(row_b) else None
+                total_pixels += 1
+                if val_a != val_b:
+                    changed_pixels += 1
+
+        if total_pixels == 0:
+            return 0.0
+        return changed_pixels / total_pixels
 
     def cleanup(self, scorecard: Optional[Any] = None) -> None:
         known_states_total = len(self.memory.state_graph)
