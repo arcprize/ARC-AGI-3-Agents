@@ -31,14 +31,13 @@ You must provide:
 """
 
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Any, Callable, Optional
 
 from ..agent import Agent
 from .abstractions import USER_ABSTRACTIONS
 from .base_navigator import BaseAbstractionNavigator
 from .grid_hash import FrameMask, MaskRect
 from .types import EnergyHudMeasurement, Frame
-
 
 # ---------------------------------------------------------------------------
 # Game-specific abstractions
@@ -104,18 +103,19 @@ def detect_player(frame_cells: Frame) -> Optional[PlayerDetection]:
     return PlayerDetection(center=center, pixel_count=count, bbox=bbox)
 
 
-ENERGY_HUD_MASK: tuple[MaskRect, ...] = ((1, 2, 2, 45),)
-# Set `FRAME_HASH_MASK` to exclude UI regions from state hashing. This is a
-# sequence of `(y0, y1, x0, x1)` rectangles. Include all energy HUD regions so
-# that energy rendering does not affect state hashing. Do not include gameplay
-# areas that affect state (player, enemies, interactables, etc.). Add more
-# rectangles if your game has additional HUD areas.
-FRAME_HASH_MASK: FrameMask = ENERGY_HUD_MASK
+LS20_ENERGY_HUD_MASK: tuple[MaskRect, ...] = ((1, 2, 2, 45),)
+AS66_ENERGY_HUD_MASK: tuple[MaskRect, ...] = ((0, 0, 0, 63),)
 
 
-def measure_energy_blocks(
-    frame: Frame,
-) -> Optional[EnergyHudMeasurement]:
+def _hash_mask_for_game(game_id: str) -> FrameMask:
+    if game_id.startswith("ls20"):
+        return LS20_ENERGY_HUD_MASK
+    if game_id.startswith("as66"):
+        return AS66_ENERGY_HUD_MASK
+    return ()
+
+
+def _measure_energy_ls20(frame: Frame) -> Optional[EnergyHudMeasurement]:
     """Extract current energy HUD state for this game.
 
     Contract for the per-game implementation:
@@ -130,7 +130,7 @@ def measure_energy_blocks(
         return None
 
     row = frame[row_index]
-    _, _, x0, x1 = ENERGY_HUD_MASK[0]
+    _, _, x0, x1 = LS20_ENERGY_HUD_MASK[0]
     row_len = len(row)
     if row_len <= x0:
         return None
@@ -152,11 +152,23 @@ def measure_energy_blocks(
         return None
 
     filled = sum(1 for v in blocks if v == 15)
+    return EnergyHudMeasurement(value=filled, capacity=total, regions=LS20_ENERGY_HUD_MASK)
+
+
+def _measure_energy_as66(frame: Frame) -> Optional[EnergyHudMeasurement]:
     return EnergyHudMeasurement(
-        value=filled,
-        capacity=total,
-        regions=ENERGY_HUD_MASK,
+        value=1,
+        capacity=4,
+        regions=AS66_ENERGY_HUD_MASK,
     )
+
+
+def _measure_energy_for_game(game_id: str) -> Callable[[Frame], Optional[EnergyHudMeasurement]]:
+    if game_id.startswith("ls20"):
+        return _measure_energy_ls20
+    if game_id.startswith("as66"):
+        return _measure_energy_as66
+    return lambda frame: None
 
 
 USER_ABSTRACTIONS.extend(
@@ -176,10 +188,15 @@ class AbstractionNavigator(BaseAbstractionNavigator, Agent):
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        game_id = str(kwargs.get("game_id", ""))
+
+        hash_mask = _hash_mask_for_game(game_id)
+        measure_energy = _measure_energy_for_game(game_id)
+
         super().__init__(
             *args,
             user_abstractions=USER_ABSTRACTIONS,
-            hash_mask=FRAME_HASH_MASK,
-            measure_energy=measure_energy_blocks,
+            hash_mask=hash_mask,
+            measure_energy=measure_energy,
             **kwargs,
         )
