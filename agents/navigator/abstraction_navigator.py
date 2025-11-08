@@ -14,14 +14,9 @@ You must provide:
      - It should detect the energy UI, returning:
          * `value`: current energy as a non-negative integer
          * `capacity`: maximum energy (integer upper bound)
-         * `regions`: a sequence of rectangles `(y0, y1, x0, x1)` that cover
+         * `mask`: a sequence of rectangles `(y0, y1, x0, x1)` that cover
            the HUD area(s). Use multiple rectangles if the HUD is disjoint.
-     - Be resilient to transient frames.
-     - Also set `FRAME_HASH_MASK: FrameMask` to exclude all UI regions from
-       state hashing (a sequence of rectangles). Include the energy HUD `regions`.
-       Do not mask gameplay elements (player, enemies, dynamic tiles). If the
-       game has no UI or energy HUD, you may use an empty tuple and return None
-       from `measure_energy`.
+     - Be resilient to transient frames. When no HUD is visible, return None.
 
   2) Optional user abstractions
      - Extend `USER_ABSTRACTIONS` with `(name, detector)` pairs.
@@ -36,7 +31,7 @@ from typing import Any, Callable, Optional
 from ..agent import Agent
 from .abstractions import USER_ABSTRACTIONS
 from .base_navigator import BaseAbstractionNavigator
-from .grid_hash import FrameMask, MaskRect
+from .grid_hash import MaskRect
 from .types import EnergyHudMeasurement, Frame
 
 # ---------------------------------------------------------------------------
@@ -107,23 +102,15 @@ LS20_ENERGY_HUD_MASK: tuple[MaskRect, ...] = ((1, 2, 2, 45),)
 AS66_ENERGY_HUD_MASK: tuple[MaskRect, ...] = ((0, 0, 0, 63),)
 
 
-def _hash_mask_for_game(game_id: str) -> FrameMask:
-    if game_id.startswith("ls20"):
-        return LS20_ENERGY_HUD_MASK
-    if game_id.startswith("as66"):
-        return AS66_ENERGY_HUD_MASK
-    return ()
-
-
 def _measure_energy_ls20(frame: Frame) -> Optional[EnergyHudMeasurement]:
     """Extract current energy HUD state for this game.
 
     Contract for the per-game implementation:
       - Input: `frame` is a 2D grid of cell values.
-      - Output: `EnergyHudMeasurement(value, capacity, regions)` where `regions`
-        is a sequence of `(y0, y1, x0, x1)`, or `None` when the HUD is not visible.
+      - Output (when the HUD is visible): `EnergyHudMeasurement(value, capacity, mask)`
+        with `mask` covering every `(y0, y1, x0, x1)` rectangle of the HUD.
       - Robustness: Prefer returning a stable `capacity` even during brief HUD
-        occlusions.
+        occlusions. If no HUD is visible, return None.
     """
     row_index = 2
     if len(frame) <= row_index or not frame[row_index]:
@@ -152,14 +139,14 @@ def _measure_energy_ls20(frame: Frame) -> Optional[EnergyHudMeasurement]:
         return None
 
     filled = sum(1 for v in blocks if v == 15)
-    return EnergyHudMeasurement(value=filled, capacity=total, regions=LS20_ENERGY_HUD_MASK)
+    return EnergyHudMeasurement(value=filled, capacity=total, mask=LS20_ENERGY_HUD_MASK)
 
 
 def _measure_energy_as66(frame: Frame) -> Optional[EnergyHudMeasurement]:
     return EnergyHudMeasurement(
-        value=1,
-        capacity=4,
-        regions=AS66_ENERGY_HUD_MASK,
+        value=1,  # placeholder reading
+        capacity=4,  # placeholder capacity
+        mask=AS66_ENERGY_HUD_MASK,
     )
 
 
@@ -190,13 +177,11 @@ class AbstractionNavigator(BaseAbstractionNavigator, Agent):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         game_id = str(kwargs.get("game_id", ""))
 
-        hash_mask = _hash_mask_for_game(game_id)
         measure_energy = _measure_energy_for_game(game_id)
 
         super().__init__(
             *args,
             user_abstractions=USER_ABSTRACTIONS,
-            hash_mask=hash_mask,
             measure_energy=measure_energy,
             **kwargs,
         )

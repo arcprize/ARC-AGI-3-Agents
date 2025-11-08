@@ -22,14 +22,18 @@ class EnergyHudMeasurement:
     """Structured representation of an energy HUD value.
 
     The energy is represented as a non-negative integer `value` with an
-    optional `capacity` upper bound and a single HUD bounding rectangle `rect`.
-    If the HUD spans disjoint regions, store the minimal bounding rectangle here
-    and enumerate all HUD rectangles in the frame hashing mask.
+    optional `capacity` upper bound and the HUD mask geometry. If the HUD spans
+    disjoint regions, include every rectangle that belongs to the HUD.
     """
 
     value: int
     capacity: int
-    regions: Sequence[Tuple[int, int, int, int]]
+    mask: Sequence[Tuple[int, int, int, int]]
+    """Rectangles describing every pixel that belongs to the energy HUD.
+
+    This mask is considered the canonical HUD geometry for the current frame and
+    is reused for frame hashing so that HUD redraws do not affect state identity.
+    """
 
     @property
     def empty_blocks(self) -> int:

@@ -58,7 +58,6 @@ class BaseAbstractionNavigator(Agent):
 
     Provide the following game-specific hooks when constructing:
       - user_abstractions: list[(name, detector)] where detector(frame) -> Any | None
-      - hash_mask: FrameMask used to hash frames while ignoring HUD areas etc.
       - measure_energy: callable (frame) -> EnergyHudMeasurement | None
 
     Notes on energy measurement:
@@ -79,7 +78,6 @@ class BaseAbstractionNavigator(Agent):
         self,
         *args: Any,
         user_abstractions: Sequence[tuple[str, AbstractionDetector]],
-        hash_mask: FrameMask,
         measure_energy: Callable[[Frame], Optional[EnergyHudMeasurement]],
         **kwargs: Any,
     ) -> None:
@@ -92,7 +90,6 @@ class BaseAbstractionNavigator(Agent):
         self.last_action: Optional[GameAction] = None
 
         self._user_abstractions = list(user_abstractions)
-        self._hash_mask = hash_mask
         self._measure_energy = measure_energy
 
         self.memory: Memory = load_memory(MEMORY_PATH, logger_prefix=self.game_id)
@@ -180,7 +177,8 @@ class BaseAbstractionNavigator(Agent):
         frame = frame_data.frame[0]
 
         energy_measurement = self._measure_energy(frame)
-        frame_hash = hash_frame(frame, mask=self._hash_mask)
+        mask: FrameMask = tuple(energy_measurement.mask) if energy_measurement else ()
+        frame_hash = hash_frame(frame, mask=mask)
         abstraction = FrameAbstraction(frame_hash=frame_hash, frame=frame)
         if energy_measurement is not None:
             abstraction.add("energy", energy_measurement)

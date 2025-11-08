@@ -21,7 +21,7 @@ FrameMask = Sequence[MaskRect]
 HASH_ID_CHARS = 6
 
 
-def hash_frame(frame: Frame, *, mask: Optional[FrameMask] = None) -> FrameHash:
+def hash_frame(frame: Frame, *, mask: FrameMask) -> FrameHash:
     if not frame:
         return FrameHash("0" * HASH_ID_CHARS)
 
