@@ -6,7 +6,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping, NewType, Optional, Tuple, Sequence
+from typing import Any, Dict, Mapping, NewType, Optional, Sequence, Tuple
 
 from ..structs import GameAction
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 FrameHash = NewType("FrameHash", str)
 
-Frame = list[list[Any]]
+Frame = list[list[int]] # 64x64
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ class TransitionMap:
         return {action.name: str(target) for action, target in self.transitions.items()}
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "TransitionMap":
+    def from_dict(cls, payload: Mapping[str, str]) -> "TransitionMap":
         transitions: Dict[GameAction, FrameHash] = {}
         for action_name, raw in payload.items():
             if action_name not in GameAction.__members__:
@@ -85,7 +85,7 @@ class Memory:
     state_graph: STATE_GRAPH = field(default_factory=dict)
     level_terminal_states: Dict[int, FrameHash] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, Dict[str, object]]:
         return {
             "state_graph": {
                 str(state_hash): record.to_dict()
@@ -98,7 +98,7 @@ class Memory:
         }
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "Memory":
+    def from_dict(cls, payload: Mapping[str, object]) -> "Memory":
         memory = cls()
         state_graph_payload = payload.get("state_graph", payload)
         if isinstance(state_graph_payload, Mapping):

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
+import numpy as np
+
 from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
 from .abstractions import FrameAbstraction, AbstractionDetector
@@ -253,47 +255,23 @@ class BaseAbstractionNavigator(Agent):
         return True
 
     def _frame_internal_change_ratio(self, snapshot: NavigatorSnapshot) -> float:
-        layers = getattr(snapshot.frame, "frame", None)
+        layers = snapshot.frame.frame
         if not isinstance(layers, list) or len(layers) < 2:
             return 0.0
 
-        baseline = layers[0]
-        max_ratio = 0.0
-        for layer in layers[1:]:
-            ratio = self._layer_difference_ratio(baseline, layer)
-            if ratio > max_ratio:
-                max_ratio = ratio
-        return max_ratio
+        return max(
+            self._layer_difference_ratio(lhs, rhs)
+            for lhs, rhs in zip(layers, layers[1:])
+        )
 
     @staticmethod
     def _layer_difference_ratio(
-        layer_a: list[list[int]], layer_b: list[list[int]]
+        layer_a: Frame, layer_b: Frame
     ) -> float:
-        total_pixels = 0
-        changed_pixels = 0
-
-        max_rows = max(len(layer_a), len(layer_b))
-        for row_idx in range(max_rows):
-            row_a = layer_a[row_idx] if row_idx < len(layer_a) else None
-            row_b = layer_b[row_idx] if row_idx < len(layer_b) else None
-
-            if row_a is None or row_b is None:
-                row = row_a or row_b or []
-                total_pixels += len(row)
-                changed_pixels += len(row)
-                continue
-
-            max_cols = max(len(row_a), len(row_b))
-            for col_idx in range(max_cols):
-                val_a = row_a[col_idx] if col_idx < len(row_a) else None
-                val_b = row_b[col_idx] if col_idx < len(row_b) else None
-                total_pixels += 1
-                if val_a != val_b:
-                    changed_pixels += 1
-
-        if total_pixels == 0:
-            return 0.0
-        return changed_pixels / total_pixels
+        arr_a = np.asarray(layer_a)
+        arr_b = np.asarray(layer_b)
+        diff = np.count_nonzero(arr_a != arr_b)
+        return float(diff) / float(arr_a.size)
 
     def cleanup(self, scorecard: Optional[Any] = None) -> None:
         known_states_total = len(self.memory.state_graph)
