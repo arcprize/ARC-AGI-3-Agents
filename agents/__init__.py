@@ -42,6 +42,7 @@ __all__ = [
     "GuidedLLM",
     "ReasoningAgent",
     "AbstractionNavigator",
+    "AbstractionNavigatorNoEnergy",
     "SmolCodingAgent",
     "SmolVisionAgent",
     "Agent",
