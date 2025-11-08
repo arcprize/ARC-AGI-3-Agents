@@ -130,20 +130,15 @@ class BaseAbstractionNavigator(Agent):
 
         prev_snapshot = self._snapshots[-2] if len(self._snapshots) >= 2 else None
 
-        should_reset_overlay, overlay_layer_count = (
-            self._should_reset_for_transition_screen(prev_snapshot, snapshot)
-        )
-
-        if should_reset_overlay:
+        if self._should_reset_for_apparent_restart(prev_snapshot, snapshot):
             logger.info(
-                "%s transition overlay detected: layers=%d state=%s score=%s",
+                "%s apparent restart screen detected: state=%s score=%s",
                 self.game_id,
-                overlay_layer_count or 0,
                 snapshot.game_state.name,
                 snapshot.score,
             )
             action = GameAction.RESET
-            action.reasoning = "transition-overlay-reset"
+            action.reasoning = "apparent-restart-reset"
             self.last_action = None
             return action
         else:
@@ -222,35 +217,34 @@ class BaseAbstractionNavigator(Agent):
         self._update_level_state(prev_snapshot, snapshot)
         return snapshot
 
-    def _should_reset_for_transition_screen(
+    def _should_reset_for_apparent_restart(
         self,
         prev_snapshot: Optional[NavigatorSnapshot],
         snapshot: NavigatorSnapshot,
-    ) -> tuple[bool, Optional[int]]:
-        has_overlay, layer_count = self._snapshot_transition_overlay_info(snapshot)
-        if not has_overlay:
-            return False, layer_count
+    ) -> bool:
+        if not self._looks_like_transition_screen(snapshot):
+            return False
 
         confirmed_progress = (
             prev_snapshot is not None and snapshot.score > prev_snapshot.score
         )
         if confirmed_progress:
-            return False, layer_count
+            return False
 
-        return True, layer_count
+        return True
 
-    def _snapshot_transition_overlay_info(
+    def _looks_like_transition_screen(
         self, snapshot: NavigatorSnapshot
-    ) -> tuple[bool, int]:
+    ) -> bool:
         frame_layers = getattr(snapshot.frame, "frame", None)
         if not isinstance(frame_layers, list):
-            return False, 0
+            return False
 
         layer_count = len(frame_layers)
         if layer_count <= 1:
-            return False, layer_count
+            return False
 
-        return True, layer_count
+        return True
 
     def cleanup(self, scorecard: Optional[Any] = None) -> None:
         known_states_total = len(self.memory.state_graph)
