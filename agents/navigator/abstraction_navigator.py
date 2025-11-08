@@ -185,3 +185,15 @@ class AbstractionNavigator(BaseAbstractionNavigator, Agent):
             measure_energy=measure_energy,
             **kwargs,
         )
+
+
+class AbstractionNavigatorNoEnergy(BaseAbstractionNavigator, Agent):
+    """Variant of the navigator that disables energy measurement entirely."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(
+            *args,
+            user_abstractions=USER_ABSTRACTIONS,
+            measure_energy=lambda frame: None,
+            **kwargs,
+        )
