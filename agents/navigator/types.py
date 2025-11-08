@@ -84,7 +84,6 @@ class Memory:
 
     state_graph: STATE_GRAPH = field(default_factory=dict)
     level_terminal_states: Dict[int, FrameHash] = field(default_factory=dict)
-    unstable_states: set[FrameHash] = field(default_factory=set)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -96,7 +95,6 @@ class Memory:
                 str(level): str(state_hash)
                 for level, state_hash in self.level_terminal_states.items()
             },
-            "unstable_states": [str(s) for s in self.unstable_states],
         }
 
     @classmethod
@@ -130,13 +128,6 @@ class Memory:
                         raw_state,
                     )
                     continue
-        unstable_list = payload.get("unstable_states", [])
-        if isinstance(unstable_list, list):
-            for raw in unstable_list:
-                try:
-                    memory.unstable_states.add(FrameHash(str(raw)))
-                except (TypeError, ValueError):
-                    logger.warning("Skipping invalid unstable state %s", raw)
         return memory
 
 

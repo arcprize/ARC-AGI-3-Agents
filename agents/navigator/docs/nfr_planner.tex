@@ -19,7 +19,7 @@ Each play starts at a known level start state $s_0 \in S$. The navigator also tr
     \item $S_{\mathrm{disc}} \subseteq S$: discovered states from prior episodes.
     \item $T_{\mathrm{known}} : S_{\mathrm{disc}} \times A \to S_{\mathrm{disc}} \cup \{\bot\}$: the partial transition map recovered from experience (returning $\bot$ when a transition has not yet been seen).
     \item $A(s) \subseteq A$: actions the environment currently allows at state $s$.
-    \item $\mathcal{F} = \{\, s \in S_{\mathrm{disc}} \mid s \text{ is not unstable and } \exists a \in A_{\mathrm{nav}} : T_{\mathrm{known}}(s,a) = \bot \,\}$, the \emph{frontier}: discovered, stable states with at least one action in $A_{\mathrm{nav}}$ whose successor is unknown in $T_{\mathrm{known}}$.
+    \item $\mathcal{F} = \{\, s \in S_{\mathrm{disc}} \mid \exists a \in A_{\mathrm{nav}} : T_{\mathrm{known}}(s,a) = \bot \,\}$, the \emph{frontier}: discovered states with at least one action in $A_{\mathrm{nav}}$ whose successor is unknown in $T_{\mathrm{known}}$.
 \end{itemize}
 
 During an episode the agent sits in state $s_t$ with available actions $A_t = A(s_t)$. The planner must output $a_t \in A_t \cup \{\mathrm{RESET}\}$ to minimise the distance to a frontier while optionally using reset jumps to $s_0$. When a terminal state $s_{\mathrm{term}}(\ell)$ is known for the current level and supplied as \texttt{target\_state}, that state is treated as a temporary goal that can outweigh frontier expansion.
@@ -46,7 +46,7 @@ The planner combines goal-directed replay with frontier exploration. At every de
     \label{eq:bfs-reset}
     D_t^{0}, P_t^{0} &= \mathrm{BFS}(\mathcal{G}_t, s_0).
     \end{align}
-    These maps provide shortest-path distances and predecessors inside the known subgraph. Both traversals consider only $A_{\mathrm{nav}}$ edges and exclude states flagged as unstable.
+    These maps provide shortest-path distances and predecessors inside the known subgraph. Both traversals consider only $A_{\mathrm{nav}}$ edges.
     \item \textbf{Candidate evaluation.} If a specific goal $g$ was chosen, evaluate it directly: when $g$ is reachable from $s_t$ (i.e. $g \in \mathrm{dom}(D_t^{c})$), follow the path recovered from $P_t^{c}$; otherwise ignore $g$ and proceed with frontier selection. When no goal is set, compute the reset-aware cost for every frontier node as
     \begin{equation}
         \label{eq:cost}
@@ -57,16 +57,6 @@ The planner combines goal-directed replay with frontier exploration. At every de
 \end{enumerate}
 
 The resulting policy naturally alternates between fast replay of known solutions (when a goal state is provided) and systematic exploration of the nearest frontier.
-
-\subsection{Handling Non-Determinism}
-
-When repeated experience reveals two different successors from the same pair $(s,a)$, the planner treats $s$ as \emph{unstable} and excludes it from subsequent search:
-\begin{itemize}
-    \item The origin state $s$ is flagged as unstable; unstable states are removed from frontier generation and from the BFS traversals used for distance computation.
-    \item If the agent is currently positioned at an unstable state, the recommended action is $\mathrm{RESET}$ to avoid replaying ambiguous transitions.
-    \item Transitions already recorded for unstable states are left unchanged for inspection; they are simply ignored by the planner.
-\end{itemize}
-This policy prevents ambiguous HUD changes or transient screens from polluting the transition function while keeping the state graph available for analysis.
 
 \section{Desirable Properties}
 

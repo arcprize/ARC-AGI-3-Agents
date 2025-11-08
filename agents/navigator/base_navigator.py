@@ -64,7 +64,7 @@ class BaseAbstractionNavigator(Agent):
         expose an energy HUD, pass a no-op function that returns None.
     """
 
-    MAX_ACTIONS = 50
+    MAX_ACTIONS = 60
     ARROW_ACTIONS = [
         GameAction.ACTION1,  # Up
         GameAction.ACTION2,  # Down
@@ -96,7 +96,6 @@ class BaseAbstractionNavigator(Agent):
         self._nfr_planner = NearFrontierPlanner(
             arrow_actions=self.ARROW_ACTIONS,
             state_graph=self.memory.state_graph,
-            unstable_states=getattr(self.memory, "unstable_states", set()),
         )
         self._snapshots: deque[NavigatorSnapshot] = deque(maxlen=3)
 
@@ -129,12 +128,27 @@ class BaseAbstractionNavigator(Agent):
         # Package raw frame into a snapshot with derived abstractions/state info.
         snapshot = self._create_navigator_snapshot(latest_frame)
 
-        # Avoid exploring from unstable states; prefer reset
-        if snapshot.frame_hash in self.memory.unstable_states:
+        prev_snapshot = self._snapshots[-2] if len(self._snapshots) >= 2 else None
+
+        is_multigrid, grid_count = self._snapshot_multigrid_info(snapshot)
+        score_increased = (
+            prev_snapshot is not None and snapshot.score > prev_snapshot.score
+        )
+
+        if is_multigrid and not score_increased:
+            logger.info(
+                "%s multigrid frame detected: grids=%d state=%s score=%s",
+                self.game_id,
+                grid_count,
+                snapshot.game_state.name,
+                snapshot.score,
+            )
             action = GameAction.RESET
-            action.reasoning = "unstable-state-reset"
+            action.reasoning = "multigrid-reset"
             self.last_action = None
             return action
+        else:
+            self._track_state_graph(prev_snapshot, snapshot)
 
         terminal_target = self.memory.level_terminal_states.get(snapshot.level)
         nfr_action = self._nfr_planner.next_action(
@@ -207,8 +221,20 @@ class BaseAbstractionNavigator(Agent):
 
         self._snapshots.append(snapshot)
         self._update_level_state(prev_snapshot, snapshot)
-        self._track_state_graph(prev_snapshot, snapshot)
         return snapshot
+
+    def _snapshot_multigrid_info(
+        self, snapshot: NavigatorSnapshot
+    ) -> tuple[bool, int]:
+        frame_layers = getattr(snapshot.frame, "frame", None)
+        if not isinstance(frame_layers, list):
+            return False, 0
+
+        grid_count = len(frame_layers)
+        if grid_count <= 1:
+            return False, grid_count
+
+        return True, grid_count
 
     def cleanup(self, scorecard: Optional[Any] = None) -> None:
         known_states_total = len(self.memory.state_graph)
@@ -256,8 +282,6 @@ class BaseAbstractionNavigator(Agent):
             or self.last_action is GameAction.RESET
         ):
             return
-        if previous_state_hash in self.memory.unstable_states:
-            return
         self._record_state_transition(
             previous_state_hash, self.last_action, snapshot.frame_hash
         )
@@ -288,14 +312,13 @@ class BaseAbstractionNavigator(Agent):
             transition_map.transitions[action] = next_hash
             return
         if existing != next_hash:
-            message = (
-                f"Non-deterministic transition: state={previous_hash}, "
-                f"action={action.name}, existing_target={existing}, new_target={next_hash}"
+            logger.warning(
+                "Non-deterministic transition: state=%s, action=%s, existing_target=%s, new_target=%s",
+                previous_hash,
+                action.name,
+                existing,
+                next_hash,
             )
-            logger.warning(message)
-            # Mark origin as unstable to exclude it from future exploration
-            self.memory.unstable_states.add(previous_hash)
-            return
 
     def _handle_level_change(
         self, prev_snapshot: NavigatorSnapshot, snapshot: NavigatorSnapshot

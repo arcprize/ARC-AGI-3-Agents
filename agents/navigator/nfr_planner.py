@@ -21,11 +21,9 @@ class NearFrontierPlanner:
         *,
         arrow_actions: Sequence[GameAction],
         state_graph: STATE_GRAPH,
-        unstable_states: Optional[set[FrameHash]] = None,
     ) -> None:
         self._arrow_actions = list(arrow_actions)
         self._state_graph = state_graph
-        self._unstable: set[FrameHash] = set(unstable_states or set())
 
     def next_action(
         self,
@@ -109,17 +107,13 @@ class NearFrontierPlanner:
         states: set[FrameHash] = set(self._state_graph.keys())
         for transition_map in self._state_graph.values():
             states.update(transition_map.transitions.values())
-        return {s for s in states if s not in self._unstable}
+        return states
 
     def _build_adj(self) -> Dict[FrameHash, List[Tuple[FrameHash, GameAction]]]:
         adjacency: Dict[FrameHash, List[Tuple[FrameHash, GameAction]]] = {}
         for state, transition_map in self._state_graph.items():
-            if state in self._unstable:
-                continue
             for action, target in transition_map.transitions.items():
                 if action not in self._arrow_actions:
-                    continue
-                if target in self._unstable:
                     continue
                 adjacency.setdefault(state, []).append((target, action))
         return adjacency
