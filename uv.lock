@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -144,6 +144,7 @@ dependencies = [
     { name = "langchain", extra = ["openai"] },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-sqlite" },
+    { name = "mypy" },
     { name = "numpy" },
     { name = "openai" },
     { name = "pillow" },
@@ -174,6 +175,7 @@ requires-dist = [
     { name = "langchain", extras = ["openai"], specifier = ">=0.3.27" },
     { name = "langgraph", specifier = ">=0.6.3" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=2.0.11" },
+    { name = "mypy", specifier = ">=1.17.1" },
     { name = "numpy", specifier = ">=2.3.2" },
     { name = "openai", specifier = "==1.72.0" },
     { name = "pillow", specifier = ">=11.2.1" },
