@@ -353,7 +353,7 @@ class LLM(Agent):
 Reply with a few sentences of plain-text strategy observation about the frame to inform your next action.
         """.format(
                 latest_frame=self.pretty_print_3d(latest_frame.frame),
-                score=latest_frame.score,
+                score=latest_frame.levels_completed,
                 state=latest_frame.state.name,
             )
         )
@@ -428,7 +428,7 @@ class ReasoningLLM(LLM, Agent):
             "reasoning_tokens": self._last_reasoning_tokens,
             "total_reasoning_tokens": self._total_reasoning_tokens,
             "game_context": {
-                "score": latest_frame.score,
+                "score": latest_frame.levels_completed,
                 "state": latest_frame.state.name,
                 "action_counter": self.action_counter,
                 "frame_count": len(frames),
@@ -524,7 +524,7 @@ class GuidedLLM(LLM, Agent):
             "reasoning_tokens": self._last_reasoning_tokens,
             "total_reasoning_tokens": self._total_reasoning_tokens,
             "game_context": {
-                "score": latest_frame.score,
+                "score": latest_frame.levels_completed,
                 "state": latest_frame.state.name,
                 "action_counter": self.action_counter,
                 "frame_count": len(frames),

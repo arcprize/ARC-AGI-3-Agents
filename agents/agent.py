@@ -55,7 +55,7 @@ class Agent(ABC):
         self.guid = ""
         self.agent_name = agent_name
         self.tags = tags or []
-        self.frames = [FrameData(score=0)]
+        self.frames = [FrameData(levels_completed=0)]
         self._cleanup = True
         if record:
             self.start_recording()
