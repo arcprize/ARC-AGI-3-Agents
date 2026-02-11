@@ -222,7 +222,7 @@ def render_frame(
 
 def add_highlight(
     draw: ImageDraw.ImageDraw,
-    coords: ImageDraw.Coords,
+    coords: tuple[tuple[int, int], tuple[int, int]],
     label: str,
 ) -> None:
     (x1, y1), (x2, y2) = coords
