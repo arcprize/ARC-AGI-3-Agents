@@ -1,12 +1,12 @@
 """
 RLM Agent — Recursive Language Model agent for ARC-AGI-3.
 
-Uses the `rlms` library to recursively decompose game frames via a Python
+Uses the `rlms` library to recursively reason about game frames via a Python
 REPL environment, with OpenRouter as the default LLM backend.
 
-The agent seeds the REPL with grid-analysis utilities and
-game history, then lets the RLM recursively examine patterns, form hypotheses,
-and choose actions.
+Designed to be general-purpose across ALL ARC-AGI-3 games (LS20, FT09, VC33, etc.)
+by discovering game mechanics through exploration rather than hardcoding
+game-specific knowledge.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import random
+import re
 import textwrap
 from typing import Any
 
@@ -28,430 +29,270 @@ logger = logging.getLogger(__name__)
 # Constants
 # ──────────────────────────────────────────────────────────────────────
 
-VALID_ACTIONS = ["RESET", "ACTION1", "ACTION2", "ACTION3", "ACTION4", "ACTION5", "ACTION6"]
-
-ACTION_DESCRIPTIONS = {
-    "RESET": "Start/restart the game",
-    "ACTION1": "Move Up (W)",
-    "ACTION2": "Move Down (S)",
-    "ACTION3": "Move Left (A)",
-    "ACTION4": "Move Right (D)",
-    "ACTION5": "Interact (Enter/Space/Delete)",
-    "ACTION6": "Click/Point at (x,y)",
-}
-
-# ──────────────────────────────────────────────────────────────────────
-# Grid Analysis Utilities (embedded to avoid dependency issues)
-# ──────────────────────────────────────────────────────────────────────
+VALID_ACTIONS = [
+    "RESET", "ACTION1", "ACTION2", "ACTION3", "ACTION4",
+    "ACTION5", "ACTION6", "ACTION7",
+]
 
 COLOR_MAP = {
-    0: "black",
-    1: "blue",
-    2: "red",
-    3: "green",
-    4: "yellow",
-    5: "gray",
-    6: "magenta",
-    7: "orange",
-    8: "light blue",
-    9: "purple",
-    10: "brown",
+    0: "black", 1: "blue", 2: "red", 3: "green", 4: "yellow",
+    5: "gray", 6: "magenta", 7: "orange", 8: "light_blue",
+    9: "purple", 10: "brown", 11: "cyan", 12: "dark_red",
+    13: "dark_green", 14: "dark_blue", 15: "white",
 }
 
-def color_name(val: int) -> str:
-    """Convert grid color value to human-readable name."""
-    return COLOR_MAP.get(val, f"unknown({val})")
+# ──────────────────────────────────────────────────────────────────────
+# General-Purpose Grid Analysis Utilities
+# (No game-specific assumptions – works for any ARC-AGI-3 game)
+# ──────────────────────────────────────────────────────────────────────
 
-def summarize_grid(grid: list[list[int]], size: int = 64) -> str:
-    """Generate a comprehensive text summary of the grid state."""
+
+def color_name(val: int) -> str:
+    """Human-readable name for a cell value."""
+    return COLOR_MAP.get(val, f"color_{val}")
+
+
+def summarize_grid(grid: list[list[int]], max_objects: int = 64) -> str:
+    """Produce a compact summary of the grid state."""
     if not grid or not grid[0]:
         return "Empty grid"
-    
-    summary = []
-    summary.append(f"Grid size: {len(grid)}x{len(grid[0])}")
-    
-    # Count colors
-    color_counts = {}
+
+    rows, cols = len(grid), len(grid[0])
+    color_counts: dict[int, int] = {}
+    non_zero = 0
+
     for row in grid:
-        for val in row:
-            color_counts[val] = color_counts.get(val, 0) + 1
-    
-    summary.append("Colors present:")
-    for val, count in sorted(color_counts.items()):
-        if count > 0:
-            summary.append(f"  {color_name(val)}: {count} cells")
-    
-    # Find distinct objects
-    objects = []
-    visited = set()
-    
-    for y in range(len(grid)):
-        for x in range(len(grid[0])):
-            if grid[y][x] != 0 and (x, y) not in visited:
-                # BFS to find connected component
-                color = grid[y][x]
-                queue = [(x, y)]
-                visited.add((x, y))
-                cells = []
-                
-                while queue:
-                    cx, cy = queue.pop()
-                    cells.append((cx, cy))
-                    
-                    for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
-                        nx, ny = cx + dx, cy + dy
-                        if (0 <= nx < len(grid[0]) and 0 <= ny < len(grid) and
-                            grid[ny][nx] == color and (nx, ny) not in visited):
-                            visited.add((nx, ny))
-                            queue.append((nx, ny))
-                
-                if len(cells) > 1:
-                    min_x = min(x for x, y in cells)
-                    max_x = max(x for x, y in cells)
-                    min_y = min(y for x, y in cells)
-                    max_y = max(y for x, y in cells)
-                    
-                    objects.append({
-                        'color': color_name(color),
-                        'size': len(cells),
-                        'bbox': (min_x, min_y, max_x, max_y),
-                        'cells': cells
-                    })
-    
-    if objects:
-        summary.append(f"Found {len(objects)} distinct objects:")
-        for i, obj in enumerate(objects[:5]):  # Limit to first 5 objects
-            summary.append(f"  Object {i+1}: {obj['color']} ({obj['size']} cells) at {obj['bbox']}")
-    
-    return "\n".join(summary)
+        for cell in row:
+            color_counts[cell] = color_counts.get(cell, 0) + 1
+            if cell != 0:
+                non_zero += 1
 
-def diff_summary(prev_grid: list[list[int]], curr_grid: list[list[int]]) -> str:
-    """Generate a compact summary of differences between two grids."""
+    top_colors = sorted(color_counts.items(), key=lambda x: -x[1])[:8]
+    color_info = ", ".join(f"{color_name(c)}={n}" for c, n in top_colors)
+
+    return (
+        f"Grid size: {rows}x{cols} | "
+        f"Non-zero cells: {non_zero}/{rows * cols} | "
+        f"Unique values: {len(color_counts)} | "
+        f"Colors: [{color_info}]"
+    )
+
+
+def diff_summary(prev_grid: list[list[int]] | None, curr_grid: list[list[int]]) -> str:
+    """Compact change-detection between two grids."""
+    if prev_grid is None:
+        return "First frame — no previous grid to compare"
     if not prev_grid or not curr_grid:
-        return "No previous grid available"
-    
-    changes = []
-    moved_objects = []
-    
-    # Track object movements
-    prev_objects = _find_objects(prev_grid)
-    curr_objects = _find_objects(curr_grid)
-    
-    for prev_obj in prev_objects:
-        # Find closest current object
-        best_match = None
-        best_dist = float('inf')
-        
-        for curr_obj in curr_objects:
-            if prev_obj['color'] == curr_obj['color'] and abs(prev_obj['size'] - curr_obj['size']) <= 1:
-                dist = abs(prev_obj['center'][0] - curr_obj['center'][0]) + abs(prev_obj['center'][1] - curr_obj['center'][1])
-                if dist < best_dist and dist < 10:  # Reasonable movement threshold
-                    best_dist = dist
-                    best_match = curr_obj
-        
-        if best_match:
-            if best_dist > 0:
-                moved_objects.append(f"{prev_obj['color']} object moved from {prev_obj['center']} to {best_match['center']}")
-    
-    # Count pixel-level changes
-    pixel_changes = 0
-    for y in range(min(len(prev_grid), len(curr_grid))):
-        for x in range(min(len(prev_grid[0]), len(curr_grid[0]))):
-            if prev_grid[y][x] != curr_grid[y][x]:
-                pixel_changes += 1
-    
-    summary = []
-    if pixel_changes > 0:
-        summary.append(f"{pixel_changes} pixels changed")
-    if moved_objects:
-        summary.extend(moved_objects)
-    if not summary:
-        summary.append("No significant changes detected")
-    
-    return "; ".join(summary)
+        return "Cannot compare — missing grid data"
 
-def _find_objects(grid: list[list[int]]) -> list[dict]:
-    """Helper to find objects in grid."""
-    objects = []
-    visited = set()
-    
-    for y in range(len(grid)):
-        for x in range(len(grid[0])):
+    rows = min(len(prev_grid), len(curr_grid))
+    cols = min(len(prev_grid[0]), len(curr_grid[0])) if rows else 0
+    changes: list[str] = []
+    pixel_changes = 0
+
+    for r in range(rows):
+        for c in range(cols):
+            if prev_grid[r][c] != curr_grid[r][c]:
+                pixel_changes += 1
+                if len(changes) < 5:
+                    changes.append(
+                        f"({r},{c}): {color_name(prev_grid[r][c])}→{color_name(curr_grid[r][c])}"
+                    )
+
+    if pixel_changes == 0:
+        return "No changes detected"
+    detail = "; ".join(changes)
+    if pixel_changes > 5:
+        detail += f" … and {pixel_changes - 5} more"
+    return f"{pixel_changes} pixels changed: {detail}"
+
+
+def find_objects(grid: list[list[int]]) -> list[dict[str, Any]]:
+    """Find connected-component objects in the grid (flood-fill, ignoring color 0)."""
+    if not grid or not grid[0]:
+        return []
+
+    rows, cols = len(grid), len(grid[0])
+    visited: set[tuple[int, int]] = set()
+    objects: list[dict[str, Any]] = []
+
+    for y in range(rows):
+        for x in range(cols):
             if grid[y][x] != 0 and (x, y) not in visited:
                 color = grid[y][x]
                 queue = [(x, y)]
                 visited.add((x, y))
-                cells = []
-                
+                cells: list[tuple[int, int]] = []
+
                 while queue:
                     cx, cy = queue.pop()
                     cells.append((cx, cy))
-                    
                     for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
                         nx, ny = cx + dx, cy + dy
-                        if (0 <= nx < len(grid[0]) and 0 <= ny < len(grid) and
-                            grid[ny][nx] == color and (nx, ny) not in visited):
+                        if (0 <= nx < cols and 0 <= ny < rows
+                                and grid[ny][nx] == color and (nx, ny) not in visited):
                             visited.add((nx, ny))
                             queue.append((nx, ny))
-                
-                if len(cells) > 1:
-                    center_x = sum(x for x, y in cells) // len(cells)
-                    center_y = sum(y for x, y in cells) // len(cells)
-                    objects.append({
-                        'color': color_name(color),
-                        'size': len(cells),
-                        'center': (center_x, center_y),
-                        'cells': cells
-                    })
-    
+
+                cx = sum(x for x, _ in cells) // len(cells)
+                cy = sum(y for _, y in cells) // len(cells)
+                xs = [x for x, _ in cells]
+                ys = [y for _, y in cells]
+                objects.append({
+                    "color": color_name(color),
+                    "color_id": color,
+                    "size": len(cells),
+                    "center": (cx, cy),
+                    "bbox": (min(xs), min(ys), max(xs), max(ys)),
+                })
+
     return objects
 
-def find_player(grid: list[list[int]]) -> dict[str, Any] | None:
-    """Try to find the player character in the grid."""
-    # Look for distinctive player patterns
-    player_patterns = [
-        [(2, 0), (2, 1), (2, 2)],  # Vertical red line
-        [(1, 0), (2, 0), (3, 0)],  # Horizontal red line
-        [(2, 0), (1, 1), (2, 2)],  # T-shape
-    ]
-    
-    for y in range(len(grid) - 2):
-        for x in range(len(grid[0]) - 2):
-            for pattern in player_patterns:
-                matches = True
-                for px, py in pattern:
-                    if grid[y + py][x + px] != 2:  # Red (player color)
-                        matches = False
-                        break
-                if matches:
-                    return {
-                        'x': x + 1,
-                        'y': y + 1,
-                        'bbox': (x, y, x + 2, y + 2),
-                        'pattern': pattern
-                    }
-    
-    return None
 
-def find_door(grid: list[list[int]]) -> dict[str, Any] | None:
-    """Try to find a door in the grid."""
-    # Look for door patterns (usually yellow/green rectangles)
-    for y in range(len(grid) - 1):
-        for x in range(len(grid[0]) - 2):
-            # Yellow rectangle pattern
-            if (grid[y][x] == 4 and grid[y][x + 1] == 4 and grid[y][x + 2] == 4 and
-                grid[y + 1][x] == 4 and grid[y + 1][x + 2] == 4):
-                return {
-                    'x': x + 1,
-                    'y': y,
-                    'inner_pattern': [[grid[y][x + 1]]],
-                }
-    
-    return None
+def grid_region(grid: list[list[int]], x1: int, y1: int, x2: int, y2: int) -> list[list[int]]:
+    """Extract a rectangular sub-region from the grid."""
+    return [row[x1:x2 + 1] for row in grid[y1:y2 + 1]]
 
-def find_key(grid: list[list[int]], size: int = 64) -> list[list[int]] | None:
-    """Try to find a key pattern in the grid."""
-    # Simple key pattern detection
-    key_patterns = [
-        [[3, 0], [3, 3]],  # Green L-shape
-        [[3, 3, 0], [0, 3, 3]],  # Green zigzag
-    ]
-    
-    for y in range(len(grid) - 1):
-        for x in range(len(grid[0]) - 2):
-            for pattern in key_patterns:
-                matches = True
-                for py, row in enumerate(pattern):
-                    for px, val in enumerate(row):
-                        if grid[y + py][x + px] != val:
-                            matches = False
-                            break
-                    if not matches:
-                        break
-                if matches:
-                    return pattern
-    
-    return None
 
 # ──────────────────────────────────────────────────────────────────────
-# System prompt for the RLM
+# System prompt for the RLM — fully general, no game-specific logic
 # ──────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = textwrap.dedent("""\
-You are an expert AI game agent playing an ARC-AGI-3 interactive reasoning game.
+You are an expert AI game agent playing ARC-AGI-3 interactive reasoning games.
+ARC-AGI-3 games are turn-based 2D grid puzzles with NO instructions provided.
+You must discover the rules, goals, and mechanics through exploration.
 
-## Your Environment
-You have a persistent Python REPL with these tools pre-loaded:
-- `grid`: the current 64x64 game grid (list[list[int]])
-- `prev_grid`: the previous grid (or None on first turn)
-- `memory`: list of past observations (list[dict])
-- `hypothesis`: your current theory about the game rules (str)
-- `turn_number`: current turn count (int)
+Each game is unique — do NOT assume any specific game mechanics.
 
-## Pre-loaded helper functions:
-- `diff_summary(prev, curr)` → compact text diff between two grids
-- `find_player(grid)` → {"x": int, "y": int, "bbox": {...}} or None
-- `find_door(grid)` → {"x": int, "y": int, "inner_pattern": [[int]]} or None
-- `find_key(grid, 64)` → 6x6 key pattern or None
-- `summarize_grid(grid, 64)` → full text summary of grid state
-- `color_name(val)` → human-readable name for a grid int value
-- `color_map` → dict mapping ints to color names
+## Environment
+- `grid`: current 64×64 game grid (list[list[int]], values 0-15)
+- `prev_grid`: previous grid (or None on first turn)
+- `memory`: list of past observations
+- `hypothesis`: your current theory about the game rules
+- `turn_number`: current turn count
 
-## Your Task
-Write Python code to analyze the game state and decide your next action.
-You MUST end by setting a variable called `result` to a dict with these keys:
+## Helper functions available
+- `summarize_grid(grid)` → compact text summary of grid state
+- `diff_summary(prev_grid, grid)` → what changed between frames
+- `find_objects(grid)` → list of connected-component objects with color, size, center, bbox
+- `grid_region(grid, x1, y1, x2, y2)` → extract a sub-region
+- `color_name(val)` → human-readable color name for a cell value
+
+## Actions
+- RESET: restart the game / level
+- ACTION1: usually mapped to Up / W
+- ACTION2: usually mapped to Down / S
+- ACTION3: usually mapped to Left / A
+- ACTION4: usually mapped to Right / D
+- ACTION5: interact / select / execute (Space)
+- ACTION6: click at coordinates — requires {"x": int, "y": int} in action_data
+- ACTION7: undo
+
+**Actions are semantically mapped but may behave differently per game.**
+
+## Your task
+Analyze the grid, compare with previous state, form hypotheses, and choose an action.
+Output MUST be a `result` dict:
 
 ```python
 result = {
-    "action": "ACTION1",  # one of: RESET, ACTION1, ACTION2, ACTION3, ACTION4, ACTION5, ACTION6
-    "reasoning": "I moved up because...",  # explain your reasoning
-    "hypothesis": "The game seems to be about...",  # current theory about game rules
-    "observation": "I noticed that...",  # what you observed this turn
+    "action": "ACTION1",
+    "reasoning": "why I chose this action",
+    "hypothesis": "my theory about the game rules",
+    "observation": "what I noticed this turn"
 }
 ```
 
-IMPORTANT: The `result` variable MUST be valid JSON. No trailing commas. Use double quotes for strings.
-
-## Action Meanings
-- RESET: start or restart the game
-- ACTION1: Move Up
-- ACTION2: Move Down
-- ACTION3: Move Left
-- ACTION4: Move Right
-- ACTION5: Interact (Enter/Space)
-- ACTION6: Click at coordinates (requires x, y in result["action_data"])
-
-## Strategy Guidelines
-1. First call summarize_grid(grid, 64) to understand the current state
-2. If prev_grid exists, call diff_summary(prev_grid, grid) to see what changed
-3. Look for patterns, objects, and relationships
-4. Form a hypothesis about the game rules
-5. Choose an action that tests your hypothesis
-6. Update your hypothesis based on observations
-
-## Example
-```python
-# Analyze the grid
-summary = summarize_grid(grid, 64)
-print(f"Grid summary: {summary}")
-
-# Check for changes
-if prev_grid:
-    changes = diff_summary(prev_grid, grid)
-    print(f"Changes: {changes}")
-
-# Look for key objects
-player = find_player(grid)
-door = find_door(grid)
-key = find_key(grid, 64)
-
-print(f"Player: {player}")
-print(f"Door: {door}")
-print(f"Key: {key}")
-
-# Make decision
-result = {
-    "action": "ACTION3",
-    "reasoning": "I see the player at position and need to move left to reach the door",
-    "hypothesis": "This is a maze game where I need to collect keys and reach doors",
-    "observation": f"Found player at {player}, door at {door}, key at {key}"
-}
-```
+## Strategy for unknown games
+1. On turn 1, summarize the grid and identify objects
+2. Try each directional action and observe what changes
+3. Look for patterns: did something move? appear? disappear?
+4. Form a hypothesis about the goal (reach something? arrange something? avoid something?)
+5. Refine your hypothesis with each observation
+6. Use ACTION5 when you suspect interaction is needed
+7. Use ACTION6 (click) if objects seem clickable
+8. RESET if stuck or if you want to retry with new knowledge
 """)
+
 
 # ──────────────────────────────────────────────────────────────────────
 # RLM Agent Implementation
 # ──────────────────────────────────────────────────────────────────────
 
+
 class RLMAgent(Agent):
     """
     Recursive Language Model agent for ARC-AGI-3.
-    
-    Uses the `rlms` library to create a recursive reasoning loop with a Python REPL.
-    The agent can analyze grid patterns, form hypotheses, and make informed decisions.
+
+    General-purpose agent that works across all ARC-AGI-3 games by
+    discovering mechanics through exploration rather than relying on
+    game-specific hardcoded logic.
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        
-        # RLM configuration
+
+        # RLM configuration from environment
         self.BACKEND = os.getenv("RLM_BACKEND", "openrouter")
         self.MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash")
         self.ENVIRONMENT = os.getenv("RLM_ENVIRONMENT", "local")
         self.VERBOSE = os.getenv("RLM_VERBOSE", "false").lower() == "true"
-        
+
         # Agent state
-        self.hypothesis = "Unknown game. Need to explore and discover the rules."
+        self.hypothesis: str = "Unknown game. Need to explore and discover the rules."
         self.memory: list[dict[str, Any]] = []
-        self.turn_number = 0
-        self._total_rlm_calls = 0
-        self._consecutive_no_change = 0
-        self._last_grid_hash = None
-        
+        self.turn_number: int = 0
+        self._total_rlm_calls: int = 0
+        self._consecutive_no_change: int = 0
+        self._last_grid_hash: int | None = None
+
         # Initialize RLM client
         self._rlm_client = self._create_rlm_client()
-        
+
         logger.info(
-            f"RLMAgent initialized: backend={self.BACKEND}, model={self.MODEL}, env={self.ENVIRONMENT}"
+            "RLMAgent initialized: backend=%s, model=%s, env=%s",
+            self.BACKEND, self.MODEL, self.ENVIRONMENT,
         )
+
+    # ── RLM client setup ────────────────────────────────────────────
 
     def _create_rlm_client(self) -> Any:
         """Create and configure the RLM client."""
         try:
             import rlms
-            backend_kwargs = self._build_backend_kwargs()
-            client = rlms.RLM(**backend_kwargs)
-            return client
-        except ImportError as e:
-            logger.error(f"Failed to import rlms: {e}")
-            raise ImportError("RLM agent requires 'rlms' package. Install with: pip install rlms")
-        except Exception as e:
-            logger.error(f"Failed to create RLM client: {e}")
-            raise
+            return rlms.RLM(**self._build_backend_kwargs())
+        except ImportError as exc:
+            logger.error("Failed to import rlms: %s", exc)
+            raise ImportError(
+                "RLM agent requires the 'rlms' package. Install with: pip install rlms"
+            ) from exc
 
     def _build_backend_kwargs(self) -> dict[str, Any]:
         """Build backend-specific configuration for RLM."""
-        if self.BACKEND == "openrouter":
-            api_key = os.getenv("OPENROUTER_API_KEY")
-            if not api_key:
-                raise ValueError("OPENROUTER_API_KEY environment variable required for OpenRouter backend")
-            
-            return {
-                "backend": "openrouter",
-                "model": self.MODEL,
-                "api_key": api_key,
-                "environment": self.ENVIRONMENT,
-                "verbose": self.VERBOSE,
-            }
-        
-        elif self.BACKEND == "openai":
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OPENAI_API_KEY environment variable required for OpenAI backend")
-            
-            return {
-                "backend": "openai",
-                "model": os.getenv("OPENAI_MODEL", "gpt-4"),
-                "api_key": api_key,
-                "environment": self.ENVIRONMENT,
-                "verbose": self.VERBOSE,
-            }
-        
-        elif self.BACKEND == "anthropic":
-            api_key = os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError("ANTHROPIC_API_KEY environment variable required for Anthropic backend")
-            
-            return {
-                "backend": "anthropic",
-                "model": os.getenv("ANTHROPIC_MODEL", "claude-3-sonnet-20240229"),
-                "api_key": api_key,
-                "environment": self.ENVIRONMENT,
-                "verbose": self.VERBOSE,
-            }
-        
-        else:
+        env_keys = {
+            "openrouter": ("OPENROUTER_API_KEY", self.MODEL),
+            "openai": ("OPENAI_API_KEY", os.getenv("OPENAI_MODEL", "gpt-4")),
+            "anthropic": ("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_MODEL", "claude-3-sonnet-20240229")),
+        }
+
+        if self.BACKEND not in env_keys:
             raise ValueError(f"Unsupported backend: {self.BACKEND}")
+
+        key_var, model = env_keys[self.BACKEND]
+        api_key = os.getenv(key_var)
+        if not api_key:
+            raise ValueError(f"{key_var} environment variable required for {self.BACKEND} backend")
+
+        return {
+            "backend": self.BACKEND,
+            "model": model,
+            "api_key": api_key,
+            "environment": self.ENVIRONMENT,
+            "verbose": self.VERBOSE,
+        }
+
+    # ── Core agent interface ────────────────────────────────────────
 
     @property
     def MAX_ACTIONS(self) -> int:
@@ -460,308 +301,184 @@ class RLMAgent(Agent):
     def choose_action(self, frame: FrameData) -> GameAction:
         """Choose the next action using recursive reasoning."""
         self.turn_number += 1
-        
-        # Handle game reset
-        if frame.state == GameState.RESET:
+
+        # Handle NOT_PLAYED state (game not started yet)
+        if frame.state == GameState.NOT_PLAYED:
             self._handle_game_reset()
             return GameAction.RESET
-        
-        # Check for stuck state
+
+        # Stuck detection → explore randomly
         if self._is_stuck(frame):
             logger.info("Agent appears stuck, taking exploratory action")
             return self._exploratory_action()
-        
-        # Build RLM prompt with current context
+
+        # Build prompt and call RLM
         prompt = self._build_prompt(frame)
-        
         try:
-            # Call RLM
             self._total_rlm_calls += 1
-            logger.info(f"RLM call #{self._total_rlm_calls} | turn {self.turn_number} | model={self.MODEL}")
-            
+            logger.info(
+                "RLM call #%d | turn %d | model=%s",
+                self._total_rlm_calls, self.turn_number, self.MODEL,
+            )
             rlm_result = self._rlm_client.completion(prompt)
-            
-            # Parse result
-            action, reasoning_meta = self._parse_rlm_result(rlm_result, frame)
-            
-            # Log reasoning
-            logger.info(f"Chosen action: {action.name} | {reasoning_meta.get('reasoning', 'N/A')[:100]}")
-            
+            action, meta = self._parse_rlm_result(rlm_result, frame)
+            logger.info("Chosen action: %s | %s", action.name, meta.get("reasoning", "")[:100])
             return action
-            
-        except Exception as e:
-            logger.error(f"RLM call failed: {e}")
+        except Exception as exc:
+            logger.error("RLM call failed: %s", exc)
             return self._fallback_action()
+
+    def is_done(self) -> bool:
+        return self.action_counter >= self.MAX_ACTIONS
+
+    # ── Prompt building ─────────────────────────────────────────────
 
     def _build_prompt(self, frame: FrameData) -> str:
         """Build the complete prompt for the RLM."""
-        # Get previous grid for comparison
         prev_grid = self.memory[-1].get("grid") if self.memory else None
-        
-        # Build REPL namespace
-        namespace = {
-            "grid": frame.frame,
-            "prev_grid": prev_grid,
-            "memory": self.memory,
-            "hypothesis": self.hypothesis,
-            "turn_number": self.turn_number,
-            # Helper functions
-            "diff_summary": diff_summary,
-            "find_player": find_player,
-            "find_door": find_door,
-            "find_key": find_key,
-            "summarize_grid": summarize_grid,
-            "color_name": color_name,
-            "color_map": COLOR_MAP,
-        }
-        
-        # Build prompt
-        prompt_parts = [
-            SYSTEM_PROMPT,
-            "\n" + "="*80 + "\n",
-            "## Current Game State\n",
-            f"Turn: {self.turn_number}\n",
-            f"Current hypothesis: {self.hypothesis}\n",
-            f"Memory entries: {len(self.memory)}\n",
-            "\n" + "="*80 + "\n",
-            "## Your Analysis\n",
-            "Write Python code to analyze the current grid and decide your action.\n",
-            "Remember to set the `result` variable with your decision.\n",
-        ]
-        
-        return "\n".join(prompt_parts)
+        # frame.frame is list[list[list[int]]] (list of 2D grids); use the first one
+        grid = frame.frame[0] if frame.frame else []
+
+        # Pre-compute analysis for context
+        grid_summary = summarize_grid(grid)
+        change_summary = diff_summary(prev_grid, grid)
+        objects = find_objects(grid)
+        obj_summary = "; ".join(
+            f"{o['color']}(size={o['size']}, center={o['center']})"
+            for o in objects[:15]
+        ) or "No objects found"
+
+        # Recent memory
+        recent = self.memory[-5:] if self.memory else []
+        memory_text = "\n".join(
+            f"  Turn {m['turn']}: {m['action']} → {m['observation'][:80]}"
+            for m in recent
+        ) or "  (no prior observations)"
+
+        prompt = f"""{SYSTEM_PROMPT}
+
+{'=' * 60}
+## Current State — Turn {self.turn_number}
+Game ID: {frame.game_id}
+Game State: {frame.state}
+Levels Completed: {getattr(frame, 'levels_completed', 0)}
+
+Grid Summary: {grid_summary}
+Changes: {change_summary}
+Objects: {obj_summary}
+
+## Hypothesis
+{self.hypothesis}
+
+## Recent Memory
+{memory_text}
+
+{'=' * 60}
+Analyze the grid and choose your next action.
+Set result = {{"action": "...", "reasoning": "...", "hypothesis": "...", "observation": "..."}}
+"""
+        return prompt
+
+    # ── Response parsing ────────────────────────────────────────────
 
     def _parse_rlm_result(
-        self, rlm_result: Any, latest_frame: FrameData
+        self, rlm_result: Any, frame: FrameData
     ) -> tuple[GameAction, dict[str, Any]]:
-        """
-        Parse the RLM response and extract the chosen action.
-        """
+        """Parse the RLM response and extract the chosen action."""
         response_text = str(rlm_result.response) if rlm_result else ""
-        
-        # Debug logging to see what we got
-        logger.debug(f"RLM Response (first 500 chars): {response_text[:500]}")
+        logger.debug("RLM response (first 500 chars): %s", response_text[:500])
 
-        # Try to parse as JSON from the response
         parsed = self._extract_result_dict(response_text)
 
         if parsed and "action" in parsed:
             action_name = parsed["action"].upper().strip()
-            logger.debug(f"Successfully parsed action: {action_name}")
 
-            # Validate action name
             if action_name not in VALID_ACTIONS:
-                logger.warning(
-                    f"Invalid action '{action_name}' from RLM, falling back"
-                )
+                logger.warning("Invalid action '%s', falling back", action_name)
                 action = self._fallback_action()
-                action_name = action.name
             else:
                 action = GameAction.from_name(action_name)
 
-            # Handle ACTION6 coordinates
+            # ACTION6 coordinate handling
             if action_name == "ACTION6" and "action_data" in parsed:
                 try:
                     action.set_data(parsed["action_data"])
-                except Exception as e:
-                    logger.warning(f"Invalid ACTION6 data: {e}, falling back")
+                except Exception as exc:
+                    logger.warning("Invalid ACTION6 data: %s", exc)
                     action = self._fallback_action()
 
-            # Extract reasoning metadata
-            reasoning = parsed.get("reasoning", "No reasoning provided")
             hypothesis = parsed.get("hypothesis", self.hypothesis)
+            reasoning = parsed.get("reasoning", "")
             observation = parsed.get("observation", "")
 
-            # Update agent state
             self.hypothesis = hypothesis
-            self._record_observation(action.name, observation, reasoning)
+            grid_2d = frame.frame[0] if frame.frame else []
+            self._record_observation(action.name, observation, reasoning, grid_2d)
 
-            reasoning_meta = {
-                "model": self.MODEL,
-                "backend": self.BACKEND,
-                "agent_type": "rlm_agent",
-                "action_chosen": action.name,
-                "reasoning": reasoning,
-                "hypothesis": hypothesis,
-                "observation": observation,
-                "turn": self.turn_number,
-                "rlm_calls_total": self._total_rlm_calls,
-                "consecutive_no_change": self._consecutive_no_change,
-                "game_context": {
-                    "score": latest_frame.levels_completed,
-                    "state": latest_frame.state.name,
-                    "action_counter": self.action_counter,
-                    "frame_count": len([latest_frame]),
-                },
-                "response_preview": reasoning[:300],
-            }
+            return action, self._build_meta(action, reasoning, frame)
 
-            return action, reasoning_meta
-
-        # If parsing failed, try extracting action from text
-        logger.warning("Could not parse structured result from RLM, attempting text extraction")
-        logger.debug(f"Failed to parse response: {response_text[:200]}")
-        action, meta = self._extract_action_from_text(response_text, latest_frame)
-        return action, meta
+        # Fallback: scan for action keyword in raw text
+        logger.warning("Structured parse failed, scanning text for action keyword")
+        action = self._action_from_text(response_text)
+        grid_2d = frame.frame[0] if frame.frame else []
+        self._record_observation(action.name, "Fallback parse", "", grid_2d)
+        return action, self._build_meta(action, "Fallback text extraction", frame)
 
     def _extract_result_dict(self, text: str) -> dict[str, Any] | None:
-        """
-        Try to extract a `result = {...}` dict from the RLM response text.
-        Uses multiple strategies: JSON parsing, regex extraction.
-        """
-        import re
-
-        # Strategy 1: Look for a JSON block in the response
-        json_patterns = [
+        """Try to extract a result dict from the RLM response."""
+        # Strategy 1: regex for result = {...} or bare JSON with "action"
+        patterns = [
             r'result\s*=\s*(\{[^}]+\})',
             r'```(?:json)?\s*(\{[^}]+\})\s*```',
             r'(\{"action":\s*"[^"]+?"[^}]*\})',
-            r'(\{[^"\'\s]*action[^}]*\})',  # More flexible action matching
         ]
-
-        for pattern in json_patterns:
-            matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
-            for match in matches:
+        for pat in patterns:
+            for m in re.findall(pat, text, re.DOTALL | re.IGNORECASE):
                 try:
-                    # Clean up common issues
-                    cleaned = match.replace("'", '"')
-                    # Handle trailing commas
+                    cleaned = m.replace("'", '"')
                     cleaned = re.sub(r',\s*}', '}', cleaned)
                     cleaned = re.sub(r',\s*]', ']', cleaned)
-                    # Fix common JSON issues
-                    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-                    
                     parsed = json.loads(cleaned)
                     if isinstance(parsed, dict) and "action" in parsed:
                         return parsed
-                except (json.JSONDecodeError, ValueError) as e:
+                except (json.JSONDecodeError, ValueError):
                     continue
 
-        # Strategy 2: Look for action keyword with more flexible patterns
-        action_patterns = [
+        # Strategy 2: key=value style
+        action_match = re.search(
             r'["\']?action["\']?\s*[:=]\s*["\']?(ACTION\d|RESET)["\']?',
-            r'action\s*=\s*["\']?(ACTION\d|RESET)["\']?',
-            r'I\s+(?:choose|select|will|should)\s+(?:action\s+)?["\']?(ACTION\d|RESET)["\']?',
-        ]
-
-        for pattern in action_patterns:
-            action_match = re.search(pattern, text, re.IGNORECASE)
-            if action_match:
-                action_name = action_match.group(1).upper()
-                
-                # Try to extract reasoning and observation
-                reasoning_match = re.search(
-                    r'["\']?reasoning["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                    text,
-                    re.IGNORECASE,
+            text, re.IGNORECASE,
+        )
+        if action_match:
+            result: dict[str, Any] = {"action": action_match.group(1).upper()}
+            for key in ("reasoning", "hypothesis", "observation"):
+                km = re.search(
+                    rf'["\']?{key}["\']?\s*[:=]\s*["\']([^"\']+)["\']',
+                    text, re.IGNORECASE,
                 )
-                
-                obs_match = re.search(
-                    r'["\']?observation["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                    text,
-                    re.IGNORECASE,
-                )
-                
-                hypothesis_match = re.search(
-                    r'["\']?hypothesis["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                    text,
-                    re.IGNORECASE,
-                )
-                
-                return {
-                    "action": action_name,
-                    "reasoning": reasoning_match.group(1) if reasoning_match else "Extracted from text",
-                    "hypothesis": hypothesis_match.group(1) if hypothesis_match else self.hypothesis,
-                    "observation": obs_match.group(1) if obs_match else "Parsed from unstructured response",
-                }
+                if km:
+                    result[key] = km.group(1)
+            return result
 
-        # Strategy 3: Try parsing the entire response as JSON
-        try:
-            cleaned_text = text.strip()
-            if cleaned_text.startswith('{') and cleaned_text.endswith('}'):
-                parsed = json.loads(cleaned_text)
-                if isinstance(parsed, dict) and "action" in parsed:
-                    return parsed
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-        # Strategy 4: Look for any ACTION mention as last resort
-        action_mention = re.search(r'\b(ACTION\d|RESET)\b', text, re.IGNORECASE)
-        if action_mention:
-            action_name = action_mention.group(1).upper()
-            return {
-                "action": action_name,
-                "reasoning": "Found action mention in text",
-                "hypothesis": self.hypothesis,
-                "observation": "Minimal extraction from text",
-            }
+        # Strategy 3: any bare ACTION mention
+        mention = re.search(r'\b(ACTION\d|RESET)\b', text, re.IGNORECASE)
+        if mention:
+            return {"action": mention.group(1).upper(), "reasoning": "Extracted from text"}
 
         return None
 
-    def _extract_action_from_text(
-        self, text: str, latest_frame: FrameData
-    ) -> tuple[GameAction, dict[str, Any]]:
-        """Last-resort extraction: scan for action keywords in text."""
-        import re
+    def _action_from_text(self, text: str) -> GameAction:
+        """Last-resort: find any action keyword in raw text."""
+        m = re.search(r'\b(ACTION\d|RESET)\b', text, re.IGNORECASE)
+        if m and m.group(1).upper() in VALID_ACTIONS:
+            return GameAction.from_name(m.group(1).upper())
+        return self._fallback_action()
 
-        # Look for any action mention
-        action_match = re.search(r'\b(ACTION\d|RESET)\b', text, re.IGNORECASE)
-        if action_match:
-            action_name = action_match.group(1).upper()
-            if action_name in VALID_ACTIONS:
-                action = GameAction.from_name(action_name)
-                
-                meta = {
-                    "model": self.MODEL,
-                    "backend": self.BACKEND,
-                    "agent_type": "rlm_agent",
-                    "action_chosen": action.name,
-                    "reasoning": "Extracted from unstructured text",
-                    "hypothesis": self.hypothesis,
-                    "observation": "Fallback parsing from text",
-                    "turn": self.turn_number,
-                    "rlm_calls_total": self._total_rlm_calls,
-                    "consecutive_no_change": self._consecutive_no_change,
-                    "game_context": {
-                        "score": latest_frame.levels_completed,
-                        "state": latest_frame.state.name,
-                        "action_counter": self.action_counter,
-                        "frame_count": len([latest_frame]),
-                    },
-                    "response_preview": text[:300],
-                    "fallback": True,
-                }
-                
-                return action, meta
-
-        # Ultimate fallback
-        action = self._fallback_action()
-        meta = {
-            "model": self.MODEL,
-            "backend": self.BACKEND,
-            "agent_type": "rlm_agent",
-            "action_chosen": action.name,
-            "reasoning": "Ultimate fallback - no action found",
-            "hypothesis": self.hypothesis,
-            "observation": "Complete parsing failure",
-            "turn": self.turn_number,
-            "rlm_calls_total": self._total_rlm_calls,
-            "consecutive_no_change": self._consecutive_no_change,
-            "game_context": {
-                "score": latest_frame.levels_completed,
-                "state": latest_frame.state.name,
-                "action_counter": self.action_counter,
-                "frame_count": len([latest_frame]),
-            },
-            "response_preview": text[:300],
-            "fallback": True,
-        }
-        
-        return action, meta
+    # ── State management helpers ────────────────────────────────────
 
     def _handle_game_reset(self) -> None:
-        """Handle game reset by clearing memory and resetting state."""
-        logger.info("Game reset detected, clearing memory")
+        """Clear memory on game reset."""
+        logger.info("Game reset — clearing memory")
         self.memory.clear()
         self.hypothesis = "Game reset. Starting fresh exploration."
         self.turn_number = 0
@@ -769,51 +486,61 @@ class RLMAgent(Agent):
         self._last_grid_hash = None
 
     def _is_stuck(self, frame: FrameData) -> bool:
-        """Detect if the agent is stuck in a loop."""
-        # Check if grid hasn't changed
-        current_hash = hash(str(frame.frame))
-        if current_hash == self._last_grid_hash:
+        """Detect if the agent is stuck (grid unchanged for several turns)."""
+        h = hash(str(frame.frame))
+        if h == self._last_grid_hash:
             self._consecutive_no_change += 1
         else:
             self._consecutive_no_change = 0
-            self._last_grid_hash = current_hash
-        
-        # Stuck if no change for multiple turns
+            self._last_grid_hash = h
         return self._consecutive_no_change >= 5
 
     def _exploratory_action(self) -> GameAction:
-        """Choose an exploratory action to get unstuck."""
-        # Random exploration
+        """Random exploration to escape stuck states."""
+        self._consecutive_no_change = 0
         return random.choice([
-            GameAction.ACTION1,  # Up
-            GameAction.ACTION2,  # Down
-            GameAction.ACTION3,  # Left
-            GameAction.ACTION4,  # Right
-            GameAction.ACTION5,  # Interact
+            GameAction.ACTION1, GameAction.ACTION2,
+            GameAction.ACTION3, GameAction.ACTION4,
+            GameAction.ACTION5,
         ])
 
     def _fallback_action(self) -> GameAction:
-        """Fallback action when all else fails."""
-        logger.warning("Using fallback action")
-        return GameAction.ACTION5  # Interact is usually safe
+        """Safe fallback action when parsing fails."""
+        logger.warning("Using fallback action (ACTION5)")
+        return GameAction.ACTION5
 
-    def _record_observation(self, action: str, observation: str, reasoning: str) -> None:
-        """Record observation in memory."""
-        entry = {
+    def _record_observation(
+        self, action: str, observation: str, reasoning: str,
+        grid: list[list[int]] | None = None,
+    ) -> None:
+        """Append an observation to episodic memory."""
+        self.memory.append({
             "turn": self.turn_number,
             "action": action,
             "observation": observation,
             "reasoning": reasoning,
             "hypothesis": self.hypothesis,
-            "timestamp": self.turn_number,
-        }
-        
-        self.memory.append(entry)
-        
-        # Keep memory size manageable
+            "grid": grid,
+        })
         if len(self.memory) > 50:
             self.memory = self.memory[-50:]
 
-    def is_done(self) -> bool:
-        """Check if the agent should stop."""
-        return self.action_counter >= self.MAX_ACTIONS
+    def _build_meta(
+        self, action: GameAction, reasoning: str, frame: FrameData
+    ) -> dict[str, Any]:
+        """Build reasoning metadata dict."""
+        return {
+            "model": self.MODEL,
+            "backend": self.BACKEND,
+            "agent_type": "rlm_agent",
+            "action_chosen": action.name,
+            "reasoning": reasoning,
+            "hypothesis": self.hypothesis,
+            "turn": self.turn_number,
+            "rlm_calls_total": self._total_rlm_calls,
+            "game_context": {
+                "levels_completed": getattr(frame, "levels_completed", 0),
+                "state": frame.state.name,
+                "action_counter": self.action_counter,
+            },
+        }
