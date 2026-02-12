@@ -10,6 +10,7 @@ from agents.structs import (
 )
 from agents.templates.langgraph_random_agent import LangGraphRandom
 from agents.templates.random_agent import Random
+from agents.templates.rlm_agent import RLM
 
 
 @pytest.mark.unit
@@ -357,3 +358,125 @@ class TestFrameData:
         assert len(frame.frame) == 2
         assert len(frame.frame[0]) == 3
         assert len(frame.frame[0][0]) == 3
+
+
+class _DummyEnv:
+    def __init__(self) -> None:
+        self.observation_space = None
+
+    def step(self, *args, **kwargs):
+        return None
+
+
+def _make_rlm_frame(
+    grid: list[list[int]],
+    levels_completed: int = 0,
+    available_actions: list[int] | None = None,
+) -> FrameData:
+    if available_actions is None:
+        available_actions = [1, 2, 3, 4, 6]
+    return FrameData(
+        game_id="ls20-cb3b57cc",
+        frame=[grid],
+        state=GameState.NOT_FINISHED,
+        levels_completed=levels_completed,
+        win_levels=7,
+        available_actions=available_actions,
+    )
+
+
+def _make_rlm_agent() -> RLM:
+    return RLM(
+        card_id="test-card",
+        game_id="ls20-cb3b57cc",
+        agent_name="rlm",
+        ROOT_URL="https://example.com",
+        record=False,
+        arc_env=_DummyEnv(),
+        tags=[],
+    )
+
+
+@pytest.mark.unit
+class TestRLMAgent:
+    def test_transition_log_cap_and_action_stats(self):
+        agent = _make_rlm_agent()
+
+        total = agent.RLM_MAX_TRANSITIONS + 10
+        for idx in range(total):
+            prev = _make_rlm_frame([[0, 0], [0, 0]])
+            cur = _make_rlm_frame([[1 if idx % 2 == 0 else 0, 0], [0, 0]])
+            action = GameAction.ACTION1 if idx % 2 == 0 else GameAction.ACTION2
+            action.set_data({})
+            agent._record_sent_action(action)
+            agent.action_counter = idx
+            agent._ingest_transition([prev, cur], cur)
+
+        assert len(agent.transition_log) == agent.RLM_MAX_TRANSITIONS
+        assert agent.tested_actions_by_state
+        any_state = next(iter(agent.tested_actions_by_state))
+        any_action = next(iter(agent.tested_actions_by_state[any_state]))
+        row = agent.tested_actions_by_state[any_state][any_action]
+        assert "samples" in row
+        assert "sum_changed" in row
+        assert "sum_level_delta" in row
+
+    def test_state_key_changes_with_grid(self):
+        agent = _make_rlm_agent()
+        key_a = agent._state_key_for_grid([[0, 0], [0, 0]])
+        key_b = agent._state_key_for_grid([[1, 0], [0, 0]])
+
+        assert key_a
+        assert key_b
+        assert key_a != key_b
+
+    def test_fallback_prefers_untested_action(self):
+        agent = _make_rlm_agent()
+        state_key = "test_state"
+        agent.current_state_key = state_key
+        agent.tested_actions_by_state[state_key] = {
+            "ACTION1": {
+                "samples": 1.0,
+                "sum_changed": 0.0,
+                "sum_level_delta": 0.0,
+                "max_level_delta": 0.0,
+            }
+        }
+
+        frame = _make_rlm_frame([[0, 0], [0, 0]], available_actions=[1, 2, 3])
+        action = agent._fallback_action(frame)
+
+        assert action.name == "ACTION2"
+
+
+    def test_tool_schemas_have_complete_required_keys(self):
+        agent = _make_rlm_agent()
+        frame = _make_rlm_frame([[0, 0], [0, 0]])
+        tools = agent._build_query_tools(include_return_insight=False) + agent._action_tools(frame) + agent._build_query_tools(include_return_insight=True)
+
+        for tool in tools:
+            params = tool.get("function", {}).get("parameters", {})
+            if not isinstance(params, dict):
+                continue
+            props = params.get("properties", {})
+            req = params.get("required", [])
+            if not isinstance(props, dict) or not isinstance(req, list):
+                continue
+            assert set(req) == set(props.keys())
+
+    def test_reasoning_payload_compacts_under_size_limit(self):
+        agent = _make_rlm_agent()
+        action = GameAction.ACTION1
+        action.set_data({})
+        action.reasoning = {
+            "agent": "RLM",
+            "text": "x" * 50000,
+            "trace": [{"k": "v" * 800}] * 200,
+        }
+
+        payload = agent._extract_reasoning_payload(action)
+        assert payload is not None
+        encoded = agent._encode_json_bytes(payload)
+
+        assert encoded is not None
+        assert len(encoded) <= agent.REASONING_MAX_BYTES

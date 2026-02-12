@@ -35,24 +35,7 @@ uv run main.py --agent=random --game=ls20
 uv run main.py --agent=rlm --game=ls20
 ```
 
-`RLM` uses bounded recursive subproblem calls plus external memory (facts and transition summaries) so the model can decompose reasoning without keeping all details in a single chat window.
-
-Optional tuning env vars for `RLM`:
-
-```bash
-RLM_MAX_INTERNAL_STEPS=6
-RLM_MAX_SUB_STEPS=4
-RLM_MAX_DEPTH=2
-RLM_MAX_FACTS=64
-RLM_MAX_TRANSITIONS=40
-RLM_MAX_SUBPROBLEMS=40
-RLM_FRAME_SAMPLE_SIZE=12
-RLM_MAX_GRID_SUMMARIES=2
-RLM_HISTOGRAM_TOP_K=8
-RLM_FOCUS_WINDOW_DEFAULT=12
-```
-
-`RLM` also auto-stores game-specific heuristics in memory from transitions (for example: blocked movement, local/global movement effects, progress signals, terminal win/loss transitions, interaction areas).
+`RLM` uses bounded recursive subproblem calls plus external memory (facts and transition summaries) so the model can decompose reasoning without keeping all details in a single chat window. To customise behaviour, subclass `RLM` and override class constants (same pattern as other agent templates).
 
 For more information, see the [documentation](https://three.arcprize.org/docs#quick-start) or the [tutorial video](https://youtu.be/xEVg9dcJMkw).
 

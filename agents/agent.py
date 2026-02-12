@@ -23,6 +23,8 @@ class Agent(ABC):
     ROOT_URL: str
 
     action_counter: int = 0
+    REASONING_MAX_BYTES: int = 16 * 1024
+    REASONING_PREVIEW_CHARS: int = 1200
 
     timer: float = 0
     agent_name: str
@@ -132,12 +134,127 @@ class Agent(ABC):
 
     def do_action_request(self, action: GameAction) -> FrameData:
         data = action.action_data.model_dump()
+        reasoning_payload = self._extract_reasoning_payload(action)
+        if reasoning_payload is not None:
+            encoded = self._encode_json_bytes(reasoning_payload)
+            size = len(encoded) if encoded is not None else -1
+            logger.debug(
+                "Submitting %s with reasoning payload bytes=%d",
+                action.name,
+                size,
+            )
         raw = self.arc_env.step(
             action,
             data=data,
-            reasoning=data["reasoning"] if "reasoning" in data else {},
+            reasoning=reasoning_payload,
         )
         return self._convert_raw_frame_data(raw)
+
+    def _extract_reasoning_payload(self, action: GameAction) -> Optional[dict[str, Any]]:
+        """Normalize any attached action reasoning into the env step payload."""
+        reasoning = getattr(action, "reasoning", None)
+        if reasoning is None:
+            return None
+        if isinstance(reasoning, dict):
+            payload: dict[str, Any] = reasoning
+        elif isinstance(reasoning, str):
+            payload = {"text": reasoning}
+        else:
+            payload = {"value": str(reasoning)}
+        return self._compact_reasoning_payload(payload)
+
+    def _compact_reasoning_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        compact_payload = self._trim_json_value(payload)
+        encoded = self._encode_json_bytes(compact_payload)
+        if encoded is not None and len(encoded) <= self.REASONING_MAX_BYTES:
+            return compact_payload
+
+        fallback: dict[str, Any] = {
+            "truncated": True,
+            "original_size_bytes": len(encoded) if encoded is not None else None,
+        }
+        for key in [
+            "agent",
+            "model",
+            "action",
+            "selected_action",
+            "mode",
+            "state_sig",
+            "reasoning_tokens",
+            "total_reasoning_tokens",
+        ]:
+            if key in compact_payload:
+                fallback[key] = self._trim_json_value(compact_payload[key], max_depth=1)
+        preview = str(compact_payload)
+        fallback["preview"] = preview[: self.REASONING_PREVIEW_CHARS]
+
+        encoded_fallback = self._encode_json_bytes(fallback)
+        if encoded_fallback is None or len(encoded_fallback) > self.REASONING_MAX_BYTES:
+            fallback = {
+                "truncated": True,
+                "preview": preview[:300],
+            }
+        logger.warning(
+            "Reasoning payload exceeded %d bytes and was compacted for env.step",
+            self.REASONING_MAX_BYTES,
+        )
+        return fallback
+
+    def _trim_json_value(
+        self,
+        value: Any,
+        max_depth: int = 3,
+        max_items: int = 12,
+        max_string: int = 600,
+    ) -> Any:
+        if max_depth <= 0:
+            return str(value)[:max_string]
+        if isinstance(value, dict):
+            trimmed: dict[str, Any] = {}
+            for idx, (key, item) in enumerate(value.items()):
+                if idx >= max_items:
+                    trimmed["..."] = f"truncated {len(value) - max_items} keys"
+                    break
+                trimmed[str(key)[:80]] = self._trim_json_value(
+                    item,
+                    max_depth=max_depth - 1,
+                    max_items=max_items,
+                    max_string=max_string,
+                )
+            return trimmed
+        if isinstance(value, list):
+            out = [
+                self._trim_json_value(
+                    item,
+                    max_depth=max_depth - 1,
+                    max_items=max_items,
+                    max_string=max_string,
+                )
+                for item in value[:max_items]
+            ]
+            if len(value) > max_items:
+                out.append(f"... truncated {len(value) - max_items} items")
+            return out
+        if isinstance(value, tuple):
+            return self._trim_json_value(
+                list(value),
+                max_depth=max_depth,
+                max_items=max_items,
+                max_string=max_string,
+            )
+        if isinstance(value, str):
+            return value[:max_string]
+        if isinstance(value, (int, float, bool)) or value is None:
+            return value
+        return str(value)[:max_string]
+
+    def _encode_json_bytes(self, value: Any) -> Optional[bytes]:
+        try:
+            return json.dumps(value, separators=(",", ":"), ensure_ascii=True).encode(
+                "utf-8"
+            )
+        except (TypeError, ValueError):
+            return None
 
     def _convert_raw_frame_data(self, raw: FrameDataRaw | None) -> FrameData:
         if raw is None:
@@ -148,6 +265,7 @@ class Agent(ABC):
             state=raw.state,
             levels_completed=raw.levels_completed,
             win_levels=raw.win_levels,
+            action_input=raw.action_input,
             guid=raw.guid,
             full_reset=raw.full_reset,
             available_actions=raw.available_actions,
