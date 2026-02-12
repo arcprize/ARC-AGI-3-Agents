@@ -11,10 +11,11 @@ dependencies = [
     "langgraph>=0.6.3",
     "langgraph-checkpoint-sqlite>=2.0.11",
     "numpy>=2.3.2",
-    "openai==1.72.0",
+    "openai>=2.14.0",
     "pillow>=11.2.1",
     "pydantic>=2.11.7",
     "requests>=2.32.4",
+    "rlms>=0.1.0",
     "smolagents>=1.20.0",
 ]
 

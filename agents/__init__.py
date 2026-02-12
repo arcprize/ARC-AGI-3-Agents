@@ -12,6 +12,7 @@ from .templates.llm_agents import LLM, FastLLM, GuidedLLM, ReasoningLLM
 from .templates.multimodal import MultiModalLLM
 from .templates.random_agent import Random
 from .templates.reasoning_agent import ReasoningAgent
+from .templates.rlm_agent import RLMAgent
 from .templates.smolagents import SmolCodingAgent, SmolVisionAgent
 
 load_dotenv()
@@ -43,6 +44,7 @@ __all__ = [
     "ReasoningAgent",
     "SmolCodingAgent",
     "SmolVisionAgent",
+    "RLMAgent",
     "Agent",
     "Recorder",
     "Playback",

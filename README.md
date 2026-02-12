@@ -29,7 +29,17 @@ export ARC_API_KEY="your_api_key_here"
 uv run main.py --agent=random --game=ls20
 ```
 
-For more information, see the [documentation](https://three.arcprize.org/docs#quick-start) or the [tutorial video](https://youtu.be/xEVg9dcJMkw).
+5. Try the RLM Agent (Recursive Language Model) for advanced reasoning:
+
+```bash
+# Set up OpenRouter API key in .env
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+
+# Run RLM agent
+uv run main.py --agent=rlmagent --game=ls20
+```
+
+For more information, see the [documentation](https://three.arcprize.org/docs#quick-start), the [tutorial video](https://youtu.be/xEVg9dcJMkw), or the [RLM Agent Guide](docs/RLM_AGENT.md).
 
 ## Changelog
 ## [0.9.3] - 2026-01-29
