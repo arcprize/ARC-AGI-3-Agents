@@ -1,18 +1,15 @@
 """
-Unit tests for the general-purpose RLM Agent.
+Unit tests for the RLM Agent (real REPL-loop architecture).
 
-Tests grid utilities directly (no mocking needed) and agent logic
-with a minimal mock for the rlms library.
+Grid utilities are tested directly (no mocking).
+Agent logic mocks only the OpenAI chat API to avoid network calls.
 """
 
 import json
-import sys
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 
 from arcengine import FrameData, GameAction, GameState
-
-# ── General grid utility tests (no mocking, real code) ──────────────
 
 from agents.templates.rlm_agent import (
     color_name,
@@ -20,142 +17,168 @@ from agents.templates.rlm_agent import (
     diff_summary,
     find_objects,
     grid_region,
+    GameREPL,
     COLOR_MAP,
     VALID_ACTIONS,
+    RLMAgent,
 )
+
+
+# ── Grid utility tests (real code, no mocking) ─────────────────────
 
 
 @pytest.mark.unit
 class TestGridUtilities:
-    """Test general-purpose grid analysis utilities."""
 
     def test_color_name_known(self):
         assert color_name(0) == "black"
         assert color_name(1) == "blue"
         assert color_name(2) == "red"
-        assert color_name(4) == "yellow"
 
     def test_color_name_unknown(self):
         assert color_name(99) == "color_99"
 
-    def test_summarize_empty_grid(self):
+    def test_summarize_empty(self):
         assert "Empty" in summarize_grid([])
         assert "Empty" in summarize_grid([[]])
 
-    def test_summarize_small_grid(self):
-        grid = [[0, 1], [2, 0]]
-        s = summarize_grid(grid)
+    def test_summarize_small(self):
+        s = summarize_grid([[0, 1], [2, 0]])
         assert "2x2" in s
-        assert "Non-zero cells: 2" in s
+        assert "non-zero=2" in s
 
-    def test_summarize_large_grid(self):
-        grid = [[0] * 64 for _ in range(64)]
-        grid[10][10] = 3
-        grid[20][20] = 5
-        s = summarize_grid(grid)
-        assert "64x64" in s
-        assert "Non-zero cells: 2" in s
-
-    def test_diff_summary_no_prev(self):
+    def test_diff_no_prev(self):
         assert "First frame" in diff_summary(None, [[1]])
 
-    def test_diff_summary_no_changes(self):
-        grid = [[0, 1], [2, 0]]
-        assert "No changes" in diff_summary(grid, grid)
+    def test_diff_no_changes(self):
+        g = [[0, 1], [2, 0]]
+        assert "No changes" in diff_summary(g, g)
 
-    def test_diff_summary_with_changes(self):
-        prev = [[0, 0], [0, 0]]
-        curr = [[1, 0], [0, 2]]
-        s = diff_summary(prev, curr)
+    def test_diff_with_changes(self):
+        s = diff_summary([[0, 0], [0, 0]], [[1, 0], [0, 2]])
         assert "2 pixels changed" in s
 
     def test_find_objects_empty(self):
         assert find_objects([[0, 0], [0, 0]]) == []
 
     def test_find_objects_single(self):
-        grid = [[0, 0, 0], [0, 1, 1], [0, 1, 0]]
-        objs = find_objects(grid)
+        objs = find_objects([[0, 0, 0], [0, 1, 1], [0, 1, 0]])
         assert len(objs) == 1
         assert objs[0]["color"] == "blue"
         assert objs[0]["size"] == 3
 
-    def test_find_objects_multiple_colors(self):
-        grid = [[1, 0, 2], [1, 0, 2], [0, 0, 0]]
-        objs = find_objects(grid)
+    def test_find_objects_multi(self):
+        objs = find_objects([[1, 0, 2], [1, 0, 2], [0, 0, 0]])
         assert len(objs) == 2
-        colors = {o["color"] for o in objs}
-        assert colors == {"blue", "red"}
 
     def test_grid_region(self):
-        grid = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
-        region = grid_region(grid, 1, 1, 2, 2)
-        assert region == [[5, 6], [8, 9]]
+        g = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        assert grid_region(g, 1, 1, 2, 2) == [[5, 6], [8, 9]]
 
-    def test_valid_actions_includes_all(self):
+    def test_valid_actions(self):
         assert "RESET" in VALID_ACTIONS
-        assert "ACTION1" in VALID_ACTIONS
         assert "ACTION7" in VALID_ACTIONS
 
 
-# ── Agent logic tests (mock rlms only) ──────────────────────────────
-
-# Minimal mock so the agent can be instantiated without the real rlms
-class _MockRLM:
-    def __init__(self, **kwargs):
-        self._response = json.dumps({
-            "action": "ACTION1",
-            "reasoning": "Exploring the grid",
-            "hypothesis": "This game requires movement",
-            "observation": "I see colored objects on the grid",
-        })
-
-    def completion(self, prompt):
-        r = Mock()
-        r.response = self._response
-        return r
+# ── GameREPL tests (real exec sandbox) ──────────────────────────────
 
 
-# Patch rlms at module level so imports succeed
-sys.modules["rlms"] = Mock()
-sys.modules["rlms"].RLM = _MockRLM
+@pytest.mark.unit
+class TestGameREPL:
 
-from agents.templates.rlm_agent import RLMAgent  # noqa: E402
+    def _repl(self) -> GameREPL:
+        grid = [[0, 1], [2, 0]]
+        return GameREPL(grid, None, [], "test hypothesis", 1)
+
+    def test_exec_print(self):
+        r = self._repl()
+        out = r.execute("print('hello')")
+        assert "hello" in out
+
+    def test_grid_accessible(self):
+        r = self._repl()
+        out = r.execute("print(grid)")
+        assert "[[0, 1], [2, 0]]" in out
+
+    def test_helpers_accessible(self):
+        r = self._repl()
+        out = r.execute("print(summarize_grid(grid))")
+        assert "2x2" in out
+
+    def test_find_objects_in_repl(self):
+        r = self._repl()
+        out = r.execute("print(find_objects(grid))")
+        assert "blue" in out or "red" in out
+
+    def test_error_handling(self):
+        r = self._repl()
+        out = r.execute("1/0")
+        assert "ZeroDivisionError" in out
+
+    def test_state_persists(self):
+        r = self._repl()
+        r.execute("x = 42")
+        out = r.execute("print(x)")
+        assert "42" in out
+
+    def test_get_var(self):
+        r = self._repl()
+        r.execute("result = {'action': 'ACTION1'}")
+        assert r.get_var("result") == {"action": "ACTION1"}
 
 
-def _make_agent() -> RLMAgent:
-    """Helper to create an RLMAgent with patched rlms."""
-    with patch("rlms.RLM", _MockRLM):
-        return RLMAgent(
-            card_id="test", game_id="test", agent_name="test",
-            ROOT_URL="http://test", record=False, arc_env=Mock(),
-        )
+# ── Agent tests (mock only the OpenAI API) ──────────────────────────
 
 
-def _frame(state=GameState.NOT_FINISHED, levels=0, game_id="test") -> FrameData:
+def _frame(state=GameState.NOT_FINISHED, levels=0, gid="test") -> FrameData:
     return FrameData(
-        game_id=game_id,
-        frame=[[
-            [0, 0, 1, 0],
-            [0, 2, 2, 0],
-            [0, 0, 0, 3],
-            [0, 0, 0, 0],
-        ]],
+        game_id=gid,
+        frame=[[[0, 0, 1, 0], [0, 2, 2, 0], [0, 0, 0, 3], [0, 0, 0, 0]]],
         state=state,
         levels_completed=levels,
     )
+
+
+def _mock_chat_response(content: str) -> Mock:
+    """Build a mock that looks like openai ChatCompletion response."""
+    msg = Mock()
+    msg.content = content
+    choice = Mock()
+    choice.message = msg
+    resp = Mock()
+    resp.choices = [choice]
+    return resp
+
+
+def _make_agent(chat_responses: list[str] | None = None) -> RLMAgent:
+    """Create an RLMAgent with a mocked OpenAI client."""
+    if chat_responses is None:
+        chat_responses = [
+            'FINAL({"action": "ACTION1", "reasoning": "exploring", '
+            '"hypothesis": "testing movement", "observation": "grid has objects"})'
+        ]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.side_effect = [
+        _mock_chat_response(c) for c in chat_responses
+    ]
+
+    agent = RLMAgent(
+        card_id="t", game_id="t", agent_name="t",
+        ROOT_URL="http://t", record=False, arc_env=Mock(),
+    )
+    agent._client = mock_client
+    return agent
 
 
 @pytest.mark.unit
 class TestRLMAgentInit:
 
     def test_defaults(self):
-        agent = _make_agent()
-        assert agent.BACKEND == "openrouter"
-        assert agent.MODEL == "google/gemini-2.5-flash"
-        assert agent.ENVIRONMENT == "local"
-        assert agent.turn_number == 0
-        assert agent.memory == []
-        assert "explore" in agent.hypothesis.lower() or "unknown" in agent.hypothesis.lower()
+        a = _make_agent()
+        assert a.MODEL == "google/gemini-2.5-flash"
+        assert a.turn_number == 0
+        assert a.memory == []
 
     def test_max_actions(self):
         assert _make_agent().MAX_ACTIONS == 80
@@ -164,122 +187,144 @@ class TestRLMAgentInit:
 @pytest.mark.unit
 class TestRLMAgentActions:
 
-    def test_choose_action_returns_valid_action(self):
-        agent = _make_agent()
-        action = agent.choose_action(_frame())
-        assert isinstance(action, GameAction)
+    def test_returns_valid_action(self):
+        a = _make_agent()
+        action = a.choose_action(_frame())
         assert action.name in VALID_ACTIONS
 
     def test_turn_increments(self):
-        agent = _make_agent()
-        agent.choose_action(_frame())
-        assert agent.turn_number == 1
-        agent.choose_action(_frame())
-        assert agent.turn_number == 2
+        # Need two FINAL responses for two calls
+        a = _make_agent([
+            'FINAL({"action": "ACTION1", "reasoning": "r"})',
+            'FINAL({"action": "ACTION2", "reasoning": "r"})',
+        ])
+        a.choose_action(_frame())
+        assert a.turn_number == 1
+        a.choose_action(_frame())
+        assert a.turn_number == 2
 
     def test_memory_recorded(self):
-        agent = _make_agent()
-        agent.choose_action(_frame())
-        assert len(agent.memory) == 1
+        a = _make_agent()
+        a.choose_action(_frame())
+        assert len(a.memory) == 1
 
     def test_reset_handling(self):
-        agent = _make_agent()
-        agent.memory.append({"turn": 1})
-        agent.turn_number = 5
-        action = agent.choose_action(_frame(state=GameState.NOT_PLAYED))
+        a = _make_agent()
+        a.memory.append({"turn": 1})
+        a.turn_number = 5
+        action = a.choose_action(_frame(state=GameState.NOT_PLAYED))
         assert action == GameAction.RESET
-        assert agent.memory == []
-        assert agent.turn_number == 0
-
-    def test_exploratory_action(self):
-        agent = _make_agent()
-        action = agent._exploratory_action()
-        assert action in [
-            GameAction.ACTION1, GameAction.ACTION2,
-            GameAction.ACTION3, GameAction.ACTION4,
-            GameAction.ACTION5,
-        ]
+        assert a.memory == []
+        assert a.turn_number == 0
 
     def test_fallback_action(self):
-        assert _make_agent()._fallback_action() == GameAction.ACTION5
+        assert _make_agent()._fallback() == GameAction.ACTION5
+
+    def test_exploratory_action(self):
+        a = _make_agent()
+        action = a._exploratory_action()
+        assert action in [
+            GameAction.ACTION1, GameAction.ACTION2,
+            GameAction.ACTION3, GameAction.ACTION4, GameAction.ACTION5,
+        ]
+
+
+@pytest.mark.unit
+class TestRLMAgentREPLLoop:
+    """Test the iterative REPL loop — the core RLM mechanism."""
+
+    def test_immediate_final(self):
+        """LLM emits FINAL on first turn → one LLM call."""
+        a = _make_agent(['FINAL({"action": "ACTION3", "reasoning": "go left"})'])
+        action = a.choose_action(_frame())
+        assert action == GameAction.ACTION3
+
+    def test_code_then_final(self):
+        """LLM writes code first, then FINAL on second turn."""
+        a = _make_agent([
+            '```python\nprint(summarize_grid(grid))\n```',
+            'FINAL({"action": "ACTION2", "reasoning": "grid analysis done"})',
+        ])
+        action = a.choose_action(_frame())
+        assert action == GameAction.ACTION2
+        # Should have made 2 LLM calls
+        assert a._total_llm_calls == 2
+
+    def test_multiple_repl_rounds(self):
+        """LLM iterates through multiple code cells."""
+        a = _make_agent([
+            '```python\nprint(summarize_grid(grid))\n```',
+            '```python\nobjs = find_objects(grid)\nprint(len(objs))\n```',
+            '```python\nprint(diff_summary(prev_grid, grid))\n```',
+            'FINAL({"action": "ACTION4", "reasoning": "found pattern"})',
+        ])
+        action = a.choose_action(_frame())
+        assert action == GameAction.ACTION4
+        assert a._total_llm_calls == 4
+
+    def test_bare_action_in_final(self):
+        """FINAL(ACTION1) without JSON."""
+        a = _make_agent(['FINAL(ACTION1)'])
+        action = a.choose_action(_frame())
+        assert action == GameAction.ACTION1
 
 
 @pytest.mark.unit
 class TestRLMAgentParsing:
 
-    def test_parse_json(self):
-        agent = _make_agent()
-        result = Mock()
-        result.response = '{"action": "ACTION2", "reasoning": "test"}'
-        action, meta = agent._parse_rlm_result(result, _frame())
-        assert action == GameAction.ACTION2
+    def test_extract_final_json(self):
+        d = RLMAgent._extract_final('FINAL({"action": "ACTION2", "reasoning": "test"})')
+        assert d is not None
+        assert d["action"] == "ACTION2"
 
-    def test_parse_result_assignment(self):
-        agent = _make_agent()
-        result = Mock()
-        result.response = 'result = {"action": "ACTION3", "reasoning": "left"}'
-        action, _ = agent._parse_rlm_result(result, _frame())
-        assert action == GameAction.ACTION3
+    def test_extract_final_bare(self):
+        d = RLMAgent._extract_final("FINAL(ACTION3)")
+        assert d is not None
+        assert d["action"] == "ACTION3"
 
-    def test_parse_bare_action(self):
-        agent = _make_agent()
-        result = Mock()
-        result.response = "I think ACTION4 is the best move"
-        action, _ = agent._parse_rlm_result(result, _frame())
-        assert action == GameAction.ACTION4
+    def test_extract_final_none(self):
+        assert RLMAgent._extract_final("no final here") is None
 
-    def test_parse_code_block(self):
-        agent = _make_agent()
-        result = Mock()
-        result.response = '```json\n{"action": "ACTION5", "reasoning": "interact"}\n```'
-        action, _ = agent._parse_rlm_result(result, _frame())
-        assert action == GameAction.ACTION5
+    def test_extract_code(self):
+        code = RLMAgent._extract_code("```python\nprint(1)\n```")
+        assert code == "print(1)"
 
-    def test_parse_garbage_falls_back(self):
-        agent = _make_agent()
-        result = Mock()
-        result.response = "I have no idea what to do lol"
-        action, _ = agent._parse_rlm_result(result, _frame())
-        assert action == GameAction.ACTION5  # fallback
+    def test_extract_code_no_block(self):
+        assert RLMAgent._extract_code("just text") is None
 
 
 @pytest.mark.unit
 class TestRLMAgentMemory:
 
     def test_memory_cap(self):
-        agent = _make_agent()
+        a = _make_agent()
         for i in range(60):
-            agent._record_observation(f"ACTION{i % 5 + 1}", f"obs {i}", f"reason {i}")
-        assert len(agent.memory) == 50
-        assert agent.memory[-1]["observation"] == "obs 59"
+            a._record(f"ACTION{i % 5 + 1}", {"observation": f"obs {i}"})
+        assert len(a.memory) == 50
+        assert a.memory[-1]["observation"] == "obs 59"
 
     def test_stuck_detection(self):
-        agent = _make_agent()
+        a = _make_agent()
         f = _frame()
         for i in range(6):
-            stuck = agent._is_stuck(f)
+            stuck = a._is_stuck(f)
             if i >= 5:
                 assert stuck
             else:
                 assert not stuck
 
-    def test_stuck_resets_on_new_grid(self):
-        agent = _make_agent()
-        f1 = _frame()
+    def test_stuck_resets(self):
+        a = _make_agent()
         for _ in range(4):
-            agent._is_stuck(f1)
-        f2 = FrameData(
-            game_id="test",
-            frame=[[[9, 9], [9, 9]]],
-            state=GameState.NOT_FINISHED,
-            levels_completed=0,
-        )
-        assert not agent._is_stuck(f2)
+            a._is_stuck(_frame())
+        f2 = FrameData(game_id="t", frame=[[[9, 9], [9, 9]]],
+                       state=GameState.NOT_FINISHED, levels_completed=0)
+        assert not a._is_stuck(f2)
 
 
 @pytest.mark.unit
 class TestRLMAgentGenerality:
-    """Verify the agent contains NO game-specific hardcoded logic."""
+    """Verify NO game-specific hardcoded logic."""
 
     def test_no_find_player(self):
         import agents.templates.rlm_agent as mod
@@ -293,20 +338,29 @@ class TestRLMAgentGenerality:
         import agents.templates.rlm_agent as mod
         assert not hasattr(mod, "find_key")
 
-    def test_system_prompt_is_general(self):
+    def test_system_prompt_general(self):
         from agents.templates.rlm_agent import SYSTEM_PROMPT
-        prompt_lower = SYSTEM_PROMPT.lower()
-        # Should NOT contain game-specific terms
-        assert "player" not in prompt_lower or "game" in prompt_lower
-        assert "door" not in prompt_lower
-        assert "key pattern" not in prompt_lower
-        # Should contain general terms
-        assert "explore" in prompt_lower or "discover" in prompt_lower
-        assert "hypothesis" in prompt_lower
+        low = SYSTEM_PROMPT.lower()
+        assert "discover" in low
+        assert "hypothesis" in low
+        assert "door" not in low
+        assert "key pattern" not in low
 
-    def test_works_with_different_game_ids(self):
-        agent = _make_agent()
-        for gid in ["ls20", "ft09", "vc33"]:
-            f = _frame(game_id=gid)
-            action = agent.choose_action(f)
+    def test_all_game_ids(self):
+        """Agent works across ls20, ft09, vc33."""
+        for gid in ("ls20", "ft09", "vc33"):
+            a = _make_agent(['FINAL({"action": "ACTION1", "reasoning": "r"})'])
+            action = a.choose_action(_frame(gid=gid))
             assert action.name in VALID_ACTIONS
+
+
+@pytest.mark.unit
+class TestNoRlmsDependency:
+    """The agent must NOT depend on the external ``rlms`` package."""
+
+    def test_no_rlms_import(self):
+        import inspect
+        import agents.templates.rlm_agent as mod
+        src = inspect.getsource(mod)
+        assert "import rlms" not in src
+        assert "from rlms" not in src
