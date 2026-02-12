@@ -773,7 +773,7 @@ class OpenCodeAgent(Agent):
                                     
                                     if status_type in ["busy", "running"]:
                                         self.opencode_client.abort_session(self.session_id)
-                                        time.sleep(0.3)
+                                        time.sleep(0.5)
                                 break
                     
                     if game_action_detected:
@@ -797,6 +797,16 @@ class OpenCodeAgent(Agent):
             if not messages:
                 logger.warning("Received empty message list from OpenCode - possible session issue")
             
+            for msg in messages:
+                info = msg.get("info", {})
+                role = info.get("role")
+                if role == "assistant":
+                    logger.info(f"Assistant message state: completed={info.get('time', {}).get('completed')}, cost={info.get('cost')}, tokens={info.get('tokens')}")
+                parts = msg.get("parts", [])
+                part_types = [p.get("type") for p in parts if isinstance(p, dict)]
+                if part_types:
+                    logger.info(f"Message has parts: {part_types}")
+            
             parsed = MessageParser.parse_messages(messages)
             
             if parsed["reasoning"]:
@@ -804,13 +814,26 @@ class OpenCodeAgent(Agent):
                 logger.info(f"Agent reasoning: {self.latest_reasoning[:200]}{'...' if len(self.latest_reasoning) > 200 else ''}")
             
             step_cost = parsed.get("total_cost", 0.0)
+            
+            if step_cost == 0.0 and game_action_detected:
+                logger.info("Cost not yet available after abort, polling once more...")
+                time.sleep(0.3)
+                retry_messages = self.opencode_client.get_messages(self.session_id, limit=100, log_request=False)
+                retry_parsed = MessageParser.parse_messages(retry_messages[messages_before_count:])
+                retry_cost = retry_parsed.get("total_cost", 0.0)
+                if retry_cost > 0:
+                    step_cost = retry_cost
+                    logger.info(f"Cost retrieved after retry: ${step_cost:.6f}")
+            
             if step_cost > 0:
                 self.cumulative_cost_usd += step_cost
                 logger.info(f"Step cost: ${step_cost:.6f}, cumulative: ${self.cumulative_cost_usd:.6f}")
+            else:
+                logger.warning("No cost information available for this step")
             
             if parsed.get("usage"):
                 usage = parsed["usage"]
-                logger.info(f"Token usage: prompt={usage['prompt_tokens']}, completion={usage['completion_tokens']}, cached={usage['cached_tokens']}")
+                logger.info(f"Token usage: prompt={usage['prompt_tokens']}, completion={usage['completion_tokens']}, cached={usage['cached_tokens']}, reasoning={usage.get('reasoning_tokens', 0)}")
             
             action_taken: Optional[GameAction] = None
             game_actions_found = []
@@ -850,6 +873,10 @@ class OpenCodeAgent(Agent):
                         simplified_messages = []
                         for msg in messages:
                             role = msg.get("info", {}).get("role")
+                            
+                            if role != "assistant":
+                                continue
+                            
                             parts = msg.get("parts", [])
                             
                             text_parts = [p.get("text", "") for p in parts if p.get("type") == "text" and p.get("text")]
@@ -884,46 +911,14 @@ class OpenCodeAgent(Agent):
                 
                 return action_taken
             
-            logger.error("❌ No valid game action found in LLM response")
+            logger.error("No valid game action found in LLM response")
             self.consecutive_errors += 1
             
-            if self.opencode_recorder and not self.is_playback:
-                try:
-                    simplified_messages = []
-                    for msg in messages:
-                        role = msg.get("info", {}).get("role")
-                        parts = msg.get("parts", [])
-                        
-                        text_parts = [p.get("text", "") for p in parts if p.get("type") == "text" and p.get("text")]
-                        tool_parts = []
-                        for p in parts:
-                            if p.get("type") == "tool":
-                                tool_info = p.get("tool")
-                                if isinstance(tool_info, dict):
-                                    tool_parts.append(tool_info.get("name", "unknown"))
-                                elif isinstance(tool_info, str):
-                                    tool_parts.append(tool_info)
-                        
-                        simplified_messages.append({
-                            "role": role,
-                            "text": " ".join(text_parts) if text_parts else None,
-                            "tools": tool_parts if tool_parts else None
-                        })
-                    
-                    self.opencode_recorder.save_step(
-                        step=self.step_counter,
-                        prompt=prompt,
-                        messages=simplified_messages,
-                        parsed_action={
-                            "action": None,
-                            "reasoning": self.latest_reasoning or "No reasoning captured",
-                            "error": "No valid game action found in LLM response",
-                            "retry_attempt": self.consecutive_errors
-                        },
-                        total_cost_usd=step_cost
-                    )
-                except Exception as rec_err:
-                    logger.error(f"Failed to save recording for failed step {self.step_counter}: {rec_err}")
+            error_info = {
+                "attempt": self.consecutive_errors - 1,
+                "error": "No valid game action found in LLM response",
+                "tools_called": [tc.get('name', 'unknown') for tc in parsed.get('tool_calls', [])]
+            }
             
             error_feedback = (
                 f"\n\nERROR: Your previous response did not contain a valid game action.\n"
@@ -940,8 +935,10 @@ class OpenCodeAgent(Agent):
                 f"Please try again and call ONE game action tool. This is attempt {self.consecutive_errors}/{self.MAX_CONSECUTIVE_ERRORS}."
             )
             
+            error_info["error_feedback_sent"] = error_feedback
+            
             if self.consecutive_errors < self.MAX_CONSECUTIVE_ERRORS:
-                logger.info(f"🔄 Sending error feedback to LLM (retry {self.consecutive_errors}/{self.MAX_CONSECUTIVE_ERRORS})")
+                logger.info(f"Sending error feedback to LLM (retry {self.consecutive_errors}/{self.MAX_CONSECUTIVE_ERRORS})")
                 
                 retry_messages_before = self.opencode_client.get_messages(self.session_id, limit=100, log_request=False)
                 retry_messages_before_count = len(retry_messages_before)
@@ -987,7 +984,7 @@ class OpenCodeAgent(Agent):
                                 if clean_name in self.ACTION_TOOL_MAP:
                                     if not game_action_detected:
                                         game_action_detected = True
-                                        logger.info(f"✓ Valid game action detected on retry: {tool_name}")
+                                        logger.info(f"Valid game action detected on retry: {tool_name}")
                                         
                                         status = self.opencode_client.get_session_status()
                                         session_status = status.get(self.session_id, {})
@@ -1032,18 +1029,27 @@ class OpenCodeAgent(Agent):
                             potential_action = self.parse_action_from_tool(tool_name, tool_input)
                             if potential_action:
                                 retry_action_taken = potential_action
-                                logger.info(f"✓ Retry successful! Action: {retry_action_taken.name}")
+                                logger.info(f"Retry successful! Action: {retry_action_taken.name}")
                                 break
                     
                     if retry_action_taken:
                         self.consecutive_errors = 0
                         self.previous_action_info = self._build_action_info(retry_action_taken)
                         
+                        retry_cost = retry_parsed.get("total_cost", 0.0)
+                        if retry_cost > 0:
+                            self.cumulative_cost_usd += retry_cost
+                            logger.info(f"Retry cost: ${retry_cost:.6f}, cumulative: ${self.cumulative_cost_usd:.6f}")
+                        
                         if self.opencode_recorder and not self.is_playback:
                             try:
                                 simplified_messages = []
                                 for msg in retry_messages:
                                     role = msg.get("info", {}).get("role")
+                                    
+                                    if role != "assistant":
+                                        continue
+                                    
                                     parts = msg.get("parts", [])
                                     
                                     text_parts = [p.get("text", "") for p in parts if p.get("type") == "text" and p.get("text")]
@@ -1064,15 +1070,16 @@ class OpenCodeAgent(Agent):
                                 
                                 self.opencode_recorder.save_step(
                                     step=self.step_counter,
-                                    prompt=error_feedback,
+                                    prompt=prompt,
                                     messages=simplified_messages,
                                     parsed_action={
                                         "action": retry_action_taken.value,
                                         "reasoning": self.latest_reasoning,
                                         "retry_success": True,
-                                        "retry_attempt": self.consecutive_errors + 1
+                                        "retry_attempt": self.consecutive_errors + 1,
+                                        "previous_error": error_info
                                     },
-                                    total_cost_usd=retry_parsed.get("total_cost", 0.0)
+                                    total_cost_usd=step_cost + retry_cost
                                 )
                             except Exception as e:
                                 logger.error(f"Failed to save retry recording: {e}")
@@ -1082,6 +1089,24 @@ class OpenCodeAgent(Agent):
                 logger.error(f"Retry failed - still no valid action")
             else:
                 logger.error(f"Max retries ({self.MAX_CONSECUTIVE_ERRORS}) reached - stopping")
+            
+            if self.opencode_recorder and not self.is_playback:
+                try:
+                    self.opencode_recorder.save_step(
+                        step=self.step_counter,
+                        prompt=prompt,
+                        messages=[],
+                        parsed_action={
+                            "action": None,
+                            "reasoning": "Failed to get valid game action after retries",
+                            "retry_failed": True,
+                            "retry_attempts": self.consecutive_errors,
+                            "error": error_info
+                        },
+                        total_cost_usd=step_cost
+                    )
+                except Exception as rec_err:
+                    logger.error(f"Failed to save recording for failed retry step {self.step_counter}: {rec_err}")
             
         except Exception as e:
             error_msg = str(e)
@@ -1112,7 +1137,7 @@ class OpenCodeAgent(Agent):
                             "error_trace": error_trace,
                             "fatal": True
                         },
-                        total_cost_usd=0.0
+                        total_cost_usd=step_cost if 'step_cost' in locals() else 0.0
                     )
                 except Exception as rec_err:
                     logger.error(f"Failed to save recording for exception step {self.step_counter}: {rec_err}")
@@ -1173,7 +1198,7 @@ class OpenCodeAgent(Agent):
             logger.info(f"Prepared reasoning for action ({len(thought_text)} chars)")
         else:
             self.latest_reasoning_dict = {}
-            logger.warning("No reasoning captured for action")
+            logger.info("No reasoning captured for action")
         
         return action
     

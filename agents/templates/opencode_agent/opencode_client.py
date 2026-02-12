@@ -4,7 +4,7 @@ from typing import Any, Optional
 import httpx
 
 logger = logging.getLogger()
-logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.CRITICAL)
 
 
 class OpenCodeClientError(Exception):
@@ -202,6 +202,19 @@ class OpenCodeClient:
         response = self._request("GET", "/mcp")
         return response.json()
     
+    def get_session_export(self, session_id: str) -> dict[str, Any]:
+        logger.info(f"Exporting session {session_id} for cost data")
+        response = self._request("GET", f"/session/{session_id}/export")
+        return response.json()
+    
+    def get_stats(self) -> dict[str, Any]:
+        response = self._request("GET", "/stats")
+        return response.json()
+    
+    def get_openapi_spec(self) -> dict[str, Any]:
+        response = self._request("GET", "/openapi.json")
+        return response.json()
+    
     def close(self):
         logger.info("Closing OpenCodeClient")
         self.client.close()
@@ -216,10 +229,12 @@ class MessageParser:
         parts = message.get("parts", [])
         
         for part in parts:
-            if isinstance(part, dict) and part.get("type") == "text":
-                text = part.get("text", "")
-                if text:
-                    texts.append(text)
+            if isinstance(part, dict):
+                part_type = part.get("type")
+                if part_type in ["text", "reasoning"]:
+                    text = part.get("text", "")
+                    if text:
+                        texts.append(text)
         
         return texts
     
@@ -270,17 +285,38 @@ class MessageParser:
     @staticmethod
     def extract_usage_info(message: dict[str, Any]) -> Optional[dict[str, Any]]:
         info = message.get("info", {})
-        usage = info.get("usage", {})
         
-        if not usage:
+        cost = info.get("cost")
+        tokens = info.get("tokens")
+        
+        role = info.get("role")
+        if role == "assistant":
+            logger.info(f"Assistant message info keys: {list(info.keys())}")
+            if cost is not None:
+                logger.info(f"Found cost: {cost}")
+            if tokens is not None:
+                logger.info(f"Found tokens: {tokens}")
+        
+        if cost is None and tokens is None:
             return None
         
+        if tokens:
+            return {
+                "prompt_tokens": tokens.get("input", 0),
+                "completion_tokens": tokens.get("output", 0),
+                "total_tokens": tokens.get("total", 0),
+                "cost": cost if cost is not None else 0.0,
+                "cached_tokens": tokens.get("cache", {}).get("read", 0),
+                "reasoning_tokens": tokens.get("reasoning", 0)
+            }
+        
         return {
-            "prompt_tokens": usage.get("prompt_tokens", 0),
-            "completion_tokens": usage.get("completion_tokens", 0),
-            "total_tokens": usage.get("total_tokens", 0),
-            "cost": usage.get("cost", 0.0),
-            "cached_tokens": usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cost": cost if cost is not None else 0.0,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0
         }
     
     @staticmethod
@@ -315,7 +351,7 @@ class MessageParser:
                 usage_info = MessageParser.extract_usage_info(msg)
                 if usage_info:
                     parsed["usage"] = usage_info
-                    parsed["total_cost"] = usage_info.get("cost", 0.0)
+                    parsed["total_cost"] += usage_info.get("cost", 0.0)
             
             elif role == "user":
                 tool_results = MessageParser.extract_tool_results(msg)
