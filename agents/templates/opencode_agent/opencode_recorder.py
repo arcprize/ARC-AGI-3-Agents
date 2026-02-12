@@ -11,12 +11,12 @@ logger = logging.getLogger()
 
 class OpenCodeRecorder:
     
-    def __init__(self, game_id: str, agent_name: str, session_id: Optional[str] = None):
+    def __init__(self, game_id: str, agent_name: str, session_id: Optional[str] = None, base_dir: Optional[str] = None):
         self.game_id = game_id
         self.agent_name = agent_name
         self.session_id = session_id or str(uuid.uuid4())
 
-        recordings_dir = os.getenv("RECORDINGS_DIR", "recordings")
+        recordings_dir = base_dir or os.getenv("RECORDINGS_DIR", "recordings")
         self.output_dir = Path(recordings_dir) / f"{game_id}_{agent_name}_{self.session_id}"
         
         try:

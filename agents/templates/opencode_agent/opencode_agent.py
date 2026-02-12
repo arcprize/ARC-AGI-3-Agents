@@ -63,7 +63,8 @@ class OpenCodeAgent(Agent):
         self.server_restart_count = 0
         
         self.notes_session_id = str(uuid.uuid4())
-        self.notes_dir = os.path.abspath(f"./game_notes/{self.game_id}_{self.notes_session_id}")
+        opencode_agent_dir = os.path.dirname(os.path.abspath(__file__))
+        self.notes_dir = os.path.join(opencode_agent_dir, "game_notes", f"{self.game_id}_{self.notes_session_id}")
         try:
             os.makedirs(self.notes_dir, exist_ok=True)
         except Exception as e:
@@ -98,10 +99,12 @@ class OpenCodeAgent(Agent):
         logger.info(f"Created notes file: {self.notes_path}")
         
         if kwargs.get("record", False):
+            recordings_dir = os.path.join(opencode_agent_dir, "recordings")
             self.opencode_recorder = OpenCodeRecorder(
                 game_id=kwargs.get("game_id", "unknown"),
                 agent_name=self.agent_name,
-                session_id=self.notes_session_id
+                session_id=self.notes_session_id,
+                base_dir=recordings_dir
             )
         else:
             self.opencode_recorder = None
@@ -708,6 +711,19 @@ class OpenCodeAgent(Agent):
             
             logger.info(f"Sending async prompt to OpenCode (length: {len(prompt)})")
             
+            tools_config = {
+                "read": True,
+                "write": True,
+                "edit": True,
+                "grep": False,
+                "glob": False,
+                "bash": False,
+                "patch": False
+            }
+            
+            messages_before = self.opencode_client.get_messages(self.session_id, limit=100, log_request=False)
+            messages_before_count = len(messages_before)
+            
             self.opencode_client.send_message_async(
                 session_id=self.session_id,
                 prompt=prompt,
@@ -719,49 +735,25 @@ class OpenCodeAgent(Agent):
                 }
             )
             
+            max_wait = 600
+            wait_count = 0
             game_action_detected = False
-            first_tool_call_time = None
-            poll_interval = 0.3
-            max_polls = 120
-            poll_count = 0
-            has_any_assistant_messages = False
-            has_step_finish = False
+            poll_interval = 0.1
             
-            logger.info("Polling for tool calls (will abort after first game action)...")
-            
-            while poll_count < max_polls:
+            while wait_count < max_wait:
                 time.sleep(poll_interval)
-                poll_count += 1
+                wait_count += 1
                 
-                try:
-                    status_response = self.opencode_client.get_session_status()
-                    session_status_obj = status_response.get(self.session_id, {})
-                    
-                    if isinstance(session_status_obj, dict):
-                        session_type = session_status_obj.get("type", "unknown")
-                    else:
-                        session_type = str(session_status_obj)
-                    
-                    messages = self.opencode_client.get_messages(self.session_id, limit=10)
-                    
-                    if not messages:
-                        logger.debug(f"Poll {poll_count}: No messages yet, waiting...")
+                messages_check = self.opencode_client.get_messages(self.session_id, limit=100, log_request=False)
+                new_messages = messages_check[messages_before_count:]
+                
+                for msg in new_messages:
+                    if msg.get("info", {}).get("role") != "assistant":
                         continue
                     
-                    for msg in messages:
-                        if msg.get("info", {}).get("role") != "assistant":
-                            continue
-                        
-                        has_any_assistant_messages = True
-                        parts = msg.get("parts", [])
-                        
-                        for part in parts:
-                            if part.get("type") == "step-finish":
-                                has_step_finish = True
-                            
-                            if not self.is_complete_tool_call(part):
-                                continue
-                            
+                    parts = msg.get("parts", [])
+                    for part in parts:
+                        if part.get("type") == "tool":
                             tool_info = part.get("tool")
                             tool_name = ""
                             if isinstance(tool_info, dict):
@@ -769,77 +761,38 @@ class OpenCodeAgent(Agent):
                             elif isinstance(tool_info, str):
                                 tool_name = tool_info
                             
-                            if not tool_name:
-                                continue
-                            
                             clean_name = tool_name.replace("arc-game-tools_", "")
                             if clean_name in self.ACTION_TOOL_MAP:
                                 if not game_action_detected:
-                                    first_tool_call_time = time.time()
                                     game_action_detected = True
-                                    logger.info(f"🎯 First game action detected at poll {poll_count}: {tool_name}")
-                                    logger.info(f"Session status: {session_type}, has_step_finish: {has_step_finish}")
+                                    logger.info(f"First game action detected after {wait_count * poll_interval:.2f}s: {tool_name} - aborting")
                                     
-                                    if not has_step_finish and session_type in ["busy", "running"]:
-                                        try:
-                                            logger.info("⚡ Aborting session to prevent additional tool calls...")
-                                            abort_success = self.opencode_client.abort_session(self.session_id)
-                                            if abort_success:
-                                                logger.info("✅ Successfully aborted session after first tool call")
-                                            else:
-                                                logger.warning("⚠️  Abort returned false")
-                                            time.sleep(0.3)
-                                        except Exception as abort_err:
-                                            logger.warning(f"Failed to abort: {abort_err}")
-                                    else:
-                                        logger.info(f"Session already finished or has step-finish, skipping abort")
-                                    break
-                        
-                        if game_action_detected:
-                            break
+                                    status = self.opencode_client.get_session_status()
+                                    session_status = status.get(self.session_id, {})
+                                    status_type = session_status.get("type", "unknown") if isinstance(session_status, dict) else str(session_status)
+                                    
+                                    if status_type in ["busy", "running"]:
+                                        self.opencode_client.abort_session(self.session_id)
+                                        time.sleep(0.3)
+                                break
                     
                     if game_action_detected:
                         break
-                    
-                    if has_any_assistant_messages and has_step_finish:
-                        logger.info(f"Session finished naturally at poll {poll_count} (step-finish detected)")
-                        break
                 
-                except Exception as e:
-                    logger.warning(f"Error during polling at iteration {poll_count}: {e}")
+                if game_action_detected:
                     break
-            
-            if not game_action_detected and poll_count >= max_polls:
-                logger.warning(f"Polling timeout after {max_polls} iterations (~{max_polls * poll_interval}s)")
-            
-            messages = self.opencode_client.get_messages(self.session_id, limit=10)
-            
-            if messages:
-                logger.info(f"Retrieved {len(messages)} messages after polling")
-                for i, msg in enumerate(messages):
-                    role = msg.get("info", {}).get("role", "unknown")
-                    parts = msg.get("parts", [])
-                    part_types = [p.get("type") for p in parts]
-                    logger.info(f"  Message {i}: role={role}, parts={part_types}")
+                
+                if not game_action_detected:
+                    status = self.opencode_client.get_session_status()
+                    session_status = status.get(self.session_id, {})
+                    status_type = session_status.get("type", "unknown") if isinstance(session_status, dict) else str(session_status)
                     
-                    for part in parts:
-                        if part.get("type") == "text":
-                            text = part.get("text", "")
-                            if text:
-                                logger.info(f"    LLM text: {text[:200]}{'...' if len(text) > 200 else ''}")
-                        elif part.get("type") == "tool":
-                            tool_info = part.get("tool")
-                            if isinstance(tool_info, dict):
-                                tool_name = tool_info.get("name", "unknown")
-                            elif isinstance(tool_info, str):
-                                tool_name = tool_info
-                            else:
-                                tool_name = str(tool_info)
-                            logger.info(f"    Tool call: {tool_name}")
+                    if status_type not in ["busy", "running"]:
+                        logger.info(f"LLM completed after {wait_count * poll_interval:.2f}s")
+                        break
             
-            if first_tool_call_time:
-                elapsed = time.time() - first_tool_call_time
-                logger.info(f"⏱️  Time from first tool call detection to message retrieval: {elapsed:.2f}s")
+            all_messages = self.opencode_client.get_messages(self.session_id, limit=100, log_request=True)
+            messages = all_messages[messages_before_count:]
             
             if not messages:
                 logger.warning("Received empty message list from OpenCode - possible session issue")
@@ -863,6 +816,9 @@ class OpenCodeAgent(Agent):
             game_actions_found = []
             
             if parsed["tool_calls"]:
+                all_tool_names = [tc.get("name", "unknown") for tc in parsed["tool_calls"]]
+                logger.info(f"LLM called {len(all_tool_names)} tool(s): {all_tool_names}")
+                
                 for tool_call in parsed["tool_calls"]:
                     tool_name = tool_call.get("name", "")
                     tool_input = tool_call.get("input", {})
@@ -891,29 +847,248 @@ class OpenCodeAgent(Agent):
                 
                 if self.opencode_recorder and not self.is_playback:
                     try:
+                        simplified_messages = []
+                        for msg in messages:
+                            role = msg.get("info", {}).get("role")
+                            parts = msg.get("parts", [])
+                            
+                            text_parts = [p.get("text", "") for p in parts if p.get("type") == "text" and p.get("text")]
+                            tool_parts = []
+                            for p in parts:
+                                if p.get("type") == "tool":
+                                    tool_info = p.get("tool")
+                                    if isinstance(tool_info, dict):
+                                        tool_parts.append(tool_info.get("name", "unknown"))
+                                    elif isinstance(tool_info, str):
+                                        tool_parts.append(tool_info)
+                            
+                            simplified_messages.append({
+                                "role": role,
+                                "text": " ".join(text_parts) if text_parts else None,
+                                "tools": tool_parts if tool_parts else None
+                            })
+                        
                         self.opencode_recorder.save_step(
                             step=self.step_counter,
                             prompt=prompt,
-                            messages=[msg for msg in messages],
+                            messages=simplified_messages,
                             parsed_action={
                                 "action": action_taken.value,
-                            "reasoning": self.latest_reasoning
-                        },
-                        total_cost_usd=step_cost
-                    )
+                                "reasoning": self.latest_reasoning
+                            },
+                            total_cost_usd=step_cost
+                        )
                     except Exception as e:
                         logger.error(f"Failed to save recording for step {self.step_counter}: {e}")
                         logger.warning("Continuing gameplay despite recording failure")
                 
                 return action_taken
             
-            logger.warning("No valid action found in response")
+            logger.error("❌ No valid game action found in LLM response")
             self.consecutive_errors += 1
             
+            if self.opencode_recorder and not self.is_playback:
+                try:
+                    simplified_messages = []
+                    for msg in messages:
+                        role = msg.get("info", {}).get("role")
+                        parts = msg.get("parts", [])
+                        
+                        text_parts = [p.get("text", "") for p in parts if p.get("type") == "text" and p.get("text")]
+                        tool_parts = []
+                        for p in parts:
+                            if p.get("type") == "tool":
+                                tool_info = p.get("tool")
+                                if isinstance(tool_info, dict):
+                                    tool_parts.append(tool_info.get("name", "unknown"))
+                                elif isinstance(tool_info, str):
+                                    tool_parts.append(tool_info)
+                        
+                        simplified_messages.append({
+                            "role": role,
+                            "text": " ".join(text_parts) if text_parts else None,
+                            "tools": tool_parts if tool_parts else None
+                        })
+                    
+                    self.opencode_recorder.save_step(
+                        step=self.step_counter,
+                        prompt=prompt,
+                        messages=simplified_messages,
+                        parsed_action={
+                            "action": None,
+                            "reasoning": self.latest_reasoning or "No reasoning captured",
+                            "error": "No valid game action found in LLM response",
+                            "retry_attempt": self.consecutive_errors
+                        },
+                        total_cost_usd=step_cost
+                    )
+                except Exception as rec_err:
+                    logger.error(f"Failed to save recording for failed step {self.step_counter}: {rec_err}")
+            
+            error_feedback = (
+                f"\n\nERROR: Your previous response did not contain a valid game action.\n"
+                f"You must call EXACTLY ONE of these game action tools:\n"
+                f"  - arc-game-tools_action1_move_up\n"
+                f"  - arc-game-tools_action2_move_down\n"
+                f"  - arc-game-tools_action3_move_left\n"
+                f"  - arc-game-tools_action4_move_right\n"
+                f"  - arc-game-tools_action5_interact\n"
+                f"  - arc-game-tools_action6_click\n"
+                f"  - arc-game-tools_action7_undo\n"
+                f"  - arc-game-tools_reset_game\n\n"
+                f"Tools you called: {[tc.get('name', 'unknown') for tc in parsed.get('tool_calls', [])]}\n\n"
+                f"Please try again and call ONE game action tool. This is attempt {self.consecutive_errors}/{self.MAX_CONSECUTIVE_ERRORS}."
+            )
+            
+            if self.consecutive_errors < self.MAX_CONSECUTIVE_ERRORS:
+                logger.info(f"🔄 Sending error feedback to LLM (retry {self.consecutive_errors}/{self.MAX_CONSECUTIVE_ERRORS})")
+                
+                retry_messages_before = self.opencode_client.get_messages(self.session_id, limit=100, log_request=False)
+                retry_messages_before_count = len(retry_messages_before)
+                
+                self.opencode_client.send_message_async(
+                    session_id=self.session_id,
+                    prompt=error_feedback,
+                    tools=tools_config,
+                    agent="build",
+                    model={
+                        "providerID": "openrouter",
+                        "modelID": self.MODEL
+                    }
+                )
+                
+                max_wait = 600
+                wait_count = 0
+                game_action_detected = False
+                poll_interval = 0.1
+                
+                while wait_count < max_wait:
+                    time.sleep(poll_interval)
+                    wait_count += 1
+                    
+                    messages_check = self.opencode_client.get_messages(self.session_id, limit=100, log_request=False)
+                    new_messages = messages_check[retry_messages_before_count:]
+                    
+                    for msg in new_messages:
+                        if msg.get("info", {}).get("role") != "assistant":
+                            continue
+                        
+                        parts = msg.get("parts", [])
+                        for part in parts:
+                            if part.get("type") == "tool":
+                                tool_info = part.get("tool")
+                                tool_name = ""
+                                if isinstance(tool_info, dict):
+                                    tool_name = tool_info.get("name", "")
+                                elif isinstance(tool_info, str):
+                                    tool_name = tool_info
+                                
+                                clean_name = tool_name.replace("arc-game-tools_", "")
+                                if clean_name in self.ACTION_TOOL_MAP:
+                                    if not game_action_detected:
+                                        game_action_detected = True
+                                        logger.info(f"✓ Valid game action detected on retry: {tool_name}")
+                                        
+                                        status = self.opencode_client.get_session_status()
+                                        session_status = status.get(self.session_id, {})
+                                        status_type = session_status.get("type", "unknown") if isinstance(session_status, dict) else str(session_status)
+                                        
+                                        if status_type in ["busy", "running"]:
+                                            self.opencode_client.abort_session(self.session_id)
+                                            time.sleep(0.3)
+                                        break
+                        
+                        if game_action_detected:
+                            break
+                    
+                    if game_action_detected:
+                        break
+                    
+                    if not game_action_detected:
+                        status = self.opencode_client.get_session_status()
+                        session_status = status.get(self.session_id, {})
+                        status_type = session_status.get("type", "unknown") if isinstance(session_status, dict) else str(session_status)
+                        
+                        if status_type not in ["busy", "running"]:
+                            logger.warning(f"Retry LLM completed but still no valid action")
+                            break
+                
+                retry_all_messages = self.opencode_client.get_messages(self.session_id, limit=100, log_request=True)
+                retry_messages = retry_all_messages[retry_messages_before_count:]
+                
+                if retry_messages:
+                    retry_parsed = MessageParser.parse_messages(retry_messages)
+                    
+                    if retry_parsed["reasoning"]:
+                        self.latest_reasoning = " ".join(retry_parsed["reasoning"])
+                        logger.info(f"Retry reasoning: {self.latest_reasoning[:200]}{'...' if len(self.latest_reasoning) > 200 else ''}")
+                    
+                    retry_action_taken = None
+                    if retry_parsed["tool_calls"]:
+                        for tool_call in retry_parsed["tool_calls"]:
+                            tool_name = tool_call.get("name", "")
+                            tool_input = tool_call.get("input", {})
+                            
+                            potential_action = self.parse_action_from_tool(tool_name, tool_input)
+                            if potential_action:
+                                retry_action_taken = potential_action
+                                logger.info(f"✓ Retry successful! Action: {retry_action_taken.name}")
+                                break
+                    
+                    if retry_action_taken:
+                        self.consecutive_errors = 0
+                        self.previous_action_info = self._build_action_info(retry_action_taken)
+                        
+                        if self.opencode_recorder and not self.is_playback:
+                            try:
+                                simplified_messages = []
+                                for msg in retry_messages:
+                                    role = msg.get("info", {}).get("role")
+                                    parts = msg.get("parts", [])
+                                    
+                                    text_parts = [p.get("text", "") for p in parts if p.get("type") == "text" and p.get("text")]
+                                    tool_parts = []
+                                    for p in parts:
+                                        if p.get("type") == "tool":
+                                            tool_info = p.get("tool")
+                                            if isinstance(tool_info, dict):
+                                                tool_parts.append(tool_info.get("name", "unknown"))
+                                            elif isinstance(tool_info, str):
+                                                tool_parts.append(tool_info)
+                                    
+                                    simplified_messages.append({
+                                        "role": role,
+                                        "text": " ".join(text_parts) if text_parts else None,
+                                        "tools": tool_parts if tool_parts else None
+                                    })
+                                
+                                self.opencode_recorder.save_step(
+                                    step=self.step_counter,
+                                    prompt=error_feedback,
+                                    messages=simplified_messages,
+                                    parsed_action={
+                                        "action": retry_action_taken.value,
+                                        "reasoning": self.latest_reasoning,
+                                        "retry_success": True,
+                                        "retry_attempt": self.consecutive_errors + 1
+                                    },
+                                    total_cost_usd=retry_parsed.get("total_cost", 0.0)
+                                )
+                            except Exception as e:
+                                logger.error(f"Failed to save retry recording: {e}")
+                        
+                        return retry_action_taken
+                
+                logger.error(f"Retry failed - still no valid action")
+            else:
+                logger.error(f"Max retries ({self.MAX_CONSECUTIVE_ERRORS}) reached - stopping")
+            
         except Exception as e:
-            logger.error(f"Error during choose_action: {e}")
+            error_msg = str(e)
+            logger.error(f"Exception during choose_action: {error_msg}")
             import traceback
-            logger.debug(traceback.format_exc())
+            error_trace = traceback.format_exc()
+            logger.debug(error_trace)
             
             if self.opencode_server_process and self.opencode_server_process.poll() is not None:
                 logger.error(f"OpenCode server has crashed (exit code: {self.opencode_server_process.poll()})")
@@ -923,24 +1098,30 @@ class OpenCodeAgent(Agent):
                 logger.error(f"OpenCode server logs:\n{server_logs}")
             
             self.consecutive_errors += 1
+            
+            if self.opencode_recorder and not self.is_playback:
+                try:
+                    self.opencode_recorder.save_step(
+                        step=self.step_counter,
+                        prompt=prompt if 'prompt' in locals() else "Prompt not available",
+                        messages=[],
+                        parsed_action={
+                            "action": None,
+                            "reasoning": "Exception occurred during action selection",
+                            "error": error_msg,
+                            "error_trace": error_trace,
+                            "fatal": True
+                        },
+                        total_cost_usd=0.0
+                    )
+                except Exception as rec_err:
+                    logger.error(f"Failed to save recording for exception step {self.step_counter}: {rec_err}")
         
-        if self.consecutive_errors > 0:
-            logger.warning(f"Falling back to default action (consecutive errors: {self.consecutive_errors}/{self.MAX_CONSECUTIVE_ERRORS})")
-        fallback = self._build_fallback_action(latest_frame)
-        self.previous_action_info = self._build_action_info(fallback)
-        return fallback
-    
-    def is_complete_tool_call(self, part: dict[str, Any]) -> bool:
-        if part.get("type") != "tool":
-            return False
-        
-        tool_info = part.get("tool")
-        if isinstance(tool_info, dict):
-            return "name" in tool_info
-        elif isinstance(tool_info, str):
-            return bool(tool_info)
-        
-        return False
+        logger.error(f"Failed to get valid action after {self.consecutive_errors} attempts")
+        raise RuntimeError(
+            f"Failed to get valid game action for step {self.step_counter} "
+            f"after {self.consecutive_errors} attempts. Check logs for details."
+        )
     
     def parse_action_from_tool(self, tool_name: str, tool_input: dict[str, Any]) -> Optional[GameAction]:
         clean_tool_name = tool_name.replace("arc-game-tools_", "")

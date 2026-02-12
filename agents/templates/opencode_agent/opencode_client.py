@@ -4,6 +4,7 @@ from typing import Any, Optional
 import httpx
 
 logger = logging.getLogger()
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class OpenCodeClientError(Exception):
@@ -32,6 +33,7 @@ class OpenCodeClient:
         self,
         method: str,
         path: str,
+        log_request: bool = True,
         **kwargs: Any
     ) -> httpx.Response:
         for attempt in range(self.max_retries):
@@ -133,13 +135,14 @@ class OpenCodeClient:
     def get_messages(
         self,
         session_id: str,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        log_request: bool = True
     ) -> list[dict[str, Any]]:
         params = {}
         if limit:
             params["limit"] = limit
         
-        response = self._request("GET", f"/session/{session_id}/message", params=params)
+        response = self._request("GET", f"/session/{session_id}/message", params=params, log_request=log_request)
         return response.json()
     
     def get_session(self, session_id: str) -> dict[str, Any]:
@@ -182,7 +185,7 @@ class OpenCodeClient:
             raise
     
     def get_session_status(self) -> dict[str, str]:
-        response = self._request("GET", "/session/status")
+        response = self._request("GET", "/session/status", log_request=False)
         return response.json()
     
     def abort_session(self, session_id: str) -> bool:
