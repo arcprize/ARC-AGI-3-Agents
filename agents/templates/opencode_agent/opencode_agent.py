@@ -116,7 +116,45 @@ class OpenCodeAgent(Agent):
         
         try:
             mcp_status = self.opencode_client.get_mcp_status()
-            logger.info(f"MCP servers status: {mcp_status}")
+            logger.info(f"MCP servers full response: {mcp_status}")
+            
+            arc_game_tools_details = mcp_status.get("arc-game-tools", {})
+            if "tools" in arc_game_tools_details:
+                logger.info(f"MCP arc-game-tools has {len(arc_game_tools_details['tools'])} tools")
+                tool_names_from_mcp = [t.get('name', 'unknown') for t in arc_game_tools_details.get('tools', [])]
+                logger.info(f"MCP tools from server: {tool_names_from_mcp[:5]}")
+            
+            try:
+                tools_response = self.opencode_client._request(
+                    "GET", 
+                    f"/experimental/tool?provider=openrouter&model={self.MODEL}"
+                )
+                tools_data = tools_response.json()
+                
+                if isinstance(tools_data, list):
+                    tools_list = tools_data
+                else:
+                    tools_list = tools_data.get('tools', [])
+                
+                logger.info(f"Available tools count: {len(tools_list)}")
+                
+                if tools_list:
+                    logger.info(f"Sample tool structure: {tools_list[0]}")
+                
+                tool_names = []
+                for t in tools_list:
+                    if isinstance(t, dict):
+                        name = t.get('name') or t.get('function', {}).get('name') or t.get('id', 'unknown')
+                        tool_names.append(name)
+                    else:
+                        tool_names.append(str(t))
+                
+                logger.info(f"All available tools: {tool_names}")
+                
+                mcp_tools = [n for n in tool_names if 'arc-game-tools' in n or 'action' in n]
+                logger.info(f"MCP game tools found: {mcp_tools}")
+            except Exception as e:
+                logger.warning(f"Could not fetch tools list: {e}")
             
             arc_tools_status = mcp_status.get("arc-game-tools", {}).get("status")
             if arc_tools_status != "connected":
@@ -706,30 +744,139 @@ class OpenCodeAgent(Agent):
             else:
                 logger.debug(f"Reusing existing session: {self.session_id}")
             
-            logger.info(f"Sending prompt to OpenCode (length: {len(prompt)})")
+            logger.info(f"Sending async prompt to OpenCode (length: {len(prompt)})")
             
-            tools_config = {
-                "read": True,
-                "write": True,
-                "edit": True,
-                "grep": True,
-                "glob": True,
-                "bash": False,
-                "patch": False
-            }
-            
-            self.opencode_client.send_message(
+            self.opencode_client.send_message_async(
                 session_id=self.session_id,
                 prompt=prompt,
-                no_reply=False,
-                tools=tools_config,
+                agent="build",
                 model={
                     "providerID": "openrouter",
                     "modelID": self.MODEL
                 }
             )
             
+            game_action_detected = False
+            first_tool_call_time = None
+            poll_interval = 0.3
+            max_polls = 120
+            poll_count = 0
+            has_any_assistant_messages = False
+            has_step_finish = False
+            
+            logger.info("Polling for tool calls (will abort after first game action)...")
+            
+            while poll_count < max_polls:
+                time.sleep(poll_interval)
+                poll_count += 1
+                
+                try:
+                    status_response = self.opencode_client.get_session_status()
+                    session_status_obj = status_response.get(self.session_id, {})
+                    
+                    if isinstance(session_status_obj, dict):
+                        session_type = session_status_obj.get("type", "unknown")
+                    else:
+                        session_type = str(session_status_obj)
+                    
+                    messages = self.opencode_client.get_messages(self.session_id, limit=10)
+                    
+                    if not messages:
+                        logger.debug(f"Poll {poll_count}: No messages yet, waiting...")
+                        continue
+                    
+                    for msg in messages:
+                        if msg.get("info", {}).get("role") != "assistant":
+                            continue
+                        
+                        has_any_assistant_messages = True
+                        parts = msg.get("parts", [])
+                        
+                        for part in parts:
+                            if part.get("type") == "step-finish":
+                                has_step_finish = True
+                            
+                            if not self.is_complete_tool_call(part):
+                                continue
+                            
+                            tool_info = part.get("tool")
+                            tool_name = ""
+                            if isinstance(tool_info, dict):
+                                tool_name = tool_info.get("name", "")
+                            elif isinstance(tool_info, str):
+                                tool_name = tool_info
+                            
+                            if not tool_name:
+                                continue
+                            
+                            clean_name = tool_name.replace("arc-game-tools_", "")
+                            if clean_name in self.ACTION_TOOL_MAP:
+                                if not game_action_detected:
+                                    first_tool_call_time = time.time()
+                                    game_action_detected = True
+                                    logger.info(f"🎯 First game action detected at poll {poll_count}: {tool_name}")
+                                    logger.info(f"Session status: {session_type}, has_step_finish: {has_step_finish}")
+                                    
+                                    if not has_step_finish and session_type in ["busy", "running"]:
+                                        try:
+                                            logger.info("⚡ Aborting session to prevent additional tool calls...")
+                                            abort_success = self.opencode_client.abort_session(self.session_id)
+                                            if abort_success:
+                                                logger.info("✅ Successfully aborted session after first tool call")
+                                            else:
+                                                logger.warning("⚠️  Abort returned false")
+                                            time.sleep(0.3)
+                                        except Exception as abort_err:
+                                            logger.warning(f"Failed to abort: {abort_err}")
+                                    else:
+                                        logger.info(f"Session already finished or has step-finish, skipping abort")
+                                    break
+                        
+                        if game_action_detected:
+                            break
+                    
+                    if game_action_detected:
+                        break
+                    
+                    if has_any_assistant_messages and has_step_finish:
+                        logger.info(f"Session finished naturally at poll {poll_count} (step-finish detected)")
+                        break
+                
+                except Exception as e:
+                    logger.warning(f"Error during polling at iteration {poll_count}: {e}")
+                    break
+            
+            if not game_action_detected and poll_count >= max_polls:
+                logger.warning(f"Polling timeout after {max_polls} iterations (~{max_polls * poll_interval}s)")
+            
             messages = self.opencode_client.get_messages(self.session_id, limit=10)
+            
+            if messages:
+                logger.info(f"Retrieved {len(messages)} messages after polling")
+                for i, msg in enumerate(messages):
+                    role = msg.get("info", {}).get("role", "unknown")
+                    parts = msg.get("parts", [])
+                    part_types = [p.get("type") for p in parts]
+                    logger.info(f"  Message {i}: role={role}, parts={part_types}")
+                    
+                    for part in parts:
+                        if part.get("type") == "text":
+                            text = part.get("text", "")
+                            if text:
+                                logger.info(f"    LLM text: {text[:200]}{'...' if len(text) > 200 else ''}")
+                        elif part.get("type") == "tool":
+                            tool_info = part.get("tool")
+                            if isinstance(tool_info, dict):
+                                tool_name = tool_info.get("name", "unknown")
+                            elif isinstance(tool_info, str):
+                                tool_name = tool_info
+                            else:
+                                tool_name = str(tool_info)
+                            logger.info(f"    Tool call: {tool_name}")
+            
+            if first_tool_call_time:
+                elapsed = time.time() - first_tool_call_time
+                logger.info(f"⏱️  Time from first tool call detection to message retrieval: {elapsed:.2f}s")
             
             if not messages:
                 logger.warning("Received empty message list from OpenCode - possible session issue")
@@ -819,6 +966,18 @@ class OpenCodeAgent(Agent):
         fallback = self._build_fallback_action(latest_frame)
         self.previous_action_info = self._build_action_info(fallback)
         return fallback
+    
+    def is_complete_tool_call(self, part: dict[str, Any]) -> bool:
+        if part.get("type") != "tool":
+            return False
+        
+        tool_info = part.get("tool")
+        if isinstance(tool_info, dict):
+            return "name" in tool_info
+        elif isinstance(tool_info, str):
+            return bool(tool_info)
+        
+        return False
     
     def parse_action_from_tool(self, tool_name: str, tool_input: dict[str, Any]) -> Optional[GameAction]:
         clean_tool_name = tool_name.replace("arc-game-tools_", "")

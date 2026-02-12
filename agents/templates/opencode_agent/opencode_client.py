@@ -146,6 +146,45 @@ class OpenCodeClient:
         response = self._request("GET", f"/session/{session_id}")
         return response.json()
     
+    def send_message_async(
+        self,
+        session_id: str,
+        prompt: str,
+        model: Optional[dict[str, str]] = None,
+        tools: Optional[dict[str, bool]] = None,
+        system: Optional[str] = None,
+        agent: Optional[str] = None
+    ) -> None:
+        body: dict[str, Any] = {
+            "parts": [{"type": "text", "text": prompt}]
+        }
+        
+        if model:
+            body["model"] = model
+        
+        if tools:
+            body["tools"] = tools
+        
+        if system:
+            body["system"] = system
+        
+        if agent:
+            body["agent"] = agent
+        
+        logger.debug(f"Sending async message to session {session_id} (prompt length: {len(prompt)})")
+        
+        try:
+            response = self._request("POST", f"/session/{session_id}/prompt_async", json=body)
+            if response.status_code != 204:
+                logger.warning(f"Unexpected status code from prompt_async: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Failed to send async message to session {session_id}: {e}")
+            raise
+    
+    def get_session_status(self) -> dict[str, str]:
+        response = self._request("GET", "/session/status")
+        return response.json()
+    
     def abort_session(self, session_id: str) -> bool:
         logger.info(f"Aborting session {session_id}")
         response = self._request("POST", f"/session/{session_id}/abort")

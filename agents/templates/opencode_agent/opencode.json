@@ -20,7 +20,7 @@
   "mcp": {
     "arc-game-tools": {
       "type": "local",
-      "command": ["uv", "run", "python", "arc_mcp_server.py"],
+      "command": ["uv", "run", "python", "/Users/vxuaj/Documents/code/arcprize/ARC-AGI-3-Agents/agents/templates/opencode_agent/arc_mcp_server.py"],
       "enabled": true
     }
   }
