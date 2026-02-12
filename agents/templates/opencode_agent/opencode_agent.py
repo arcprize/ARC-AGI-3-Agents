@@ -116,45 +116,7 @@ class OpenCodeAgent(Agent):
         
         try:
             mcp_status = self.opencode_client.get_mcp_status()
-            logger.info(f"MCP servers full response: {mcp_status}")
-            
-            arc_game_tools_details = mcp_status.get("arc-game-tools", {})
-            if "tools" in arc_game_tools_details:
-                logger.info(f"MCP arc-game-tools has {len(arc_game_tools_details['tools'])} tools")
-                tool_names_from_mcp = [t.get('name', 'unknown') for t in arc_game_tools_details.get('tools', [])]
-                logger.info(f"MCP tools from server: {tool_names_from_mcp[:5]}")
-            
-            try:
-                tools_response = self.opencode_client._request(
-                    "GET", 
-                    f"/experimental/tool?provider=openrouter&model={self.MODEL}"
-                )
-                tools_data = tools_response.json()
-                
-                if isinstance(tools_data, list):
-                    tools_list = tools_data
-                else:
-                    tools_list = tools_data.get('tools', [])
-                
-                logger.info(f"Available tools count: {len(tools_list)}")
-                
-                if tools_list:
-                    logger.info(f"Sample tool structure: {tools_list[0]}")
-                
-                tool_names = []
-                for t in tools_list:
-                    if isinstance(t, dict):
-                        name = t.get('name') or t.get('function', {}).get('name') or t.get('id', 'unknown')
-                        tool_names.append(name)
-                    else:
-                        tool_names.append(str(t))
-                
-                logger.info(f"All available tools: {tool_names}")
-                
-                mcp_tools = [n for n in tool_names if 'arc-game-tools' in n or 'action' in n]
-                logger.info(f"MCP game tools found: {mcp_tools}")
-            except Exception as e:
-                logger.warning(f"Could not fetch tools list: {e}")
+            logger.info(f"MCP servers status: {mcp_status}")
             
             arc_tools_status = mcp_status.get("arc-game-tools", {}).get("status")
             if arc_tools_status != "connected":
@@ -749,6 +711,7 @@ class OpenCodeAgent(Agent):
             self.opencode_client.send_message_async(
                 session_id=self.session_id,
                 prompt=prompt,
+                tools=tools_config,
                 agent="build",
                 model={
                     "providerID": "openrouter",
