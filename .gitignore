@@ -13,9 +13,8 @@
 .vscode/
 
 # Recordings
-recordings/*.recording.jsonl
-tests/recordings/*.recording.jsonl
-tests/recordings/not-a-recording.txt
+recordings/
+game_notes/
 
 # Long-term memory
 memory.db
