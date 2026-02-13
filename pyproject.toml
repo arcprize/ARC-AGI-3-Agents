@@ -6,7 +6,6 @@ readme = "readme.md"
 requires-python = ">=3.12"
 dependencies = [
     "arc-agi>=0.9.1",
-    "claude-agent-sdk>=0.1.25",
     "python-dotenv>=1.0.0",
     "httpx>=0.28.1",
     "langchain[openai]>=0.3.27",

@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 from .agent import Agent, Playback
 from .recorder import Recorder
 from .swarm import Swarm
-from .templates.claude_agent import ClaudeCodeAgent
 from .templates.opencode_agent import OpenCodeAgent
 from .templates.langgraph_functional_agent import LangGraphFunc, LangGraphTextOnly
 from .templates.langgraph_random_agent import LangGraphRandom
@@ -45,7 +44,6 @@ __all__ = [
     "ReasoningAgent",
     "SmolCodingAgent",
     "SmolVisionAgent",
-    "ClaudeCodeAgent",
     "OpenCodeAgent",
     "Agent",
     "Recorder",
