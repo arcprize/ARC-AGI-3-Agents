@@ -124,7 +124,7 @@ Agent uses standard file tools (read, write, apply_patch) to manage structured n
 
 **Savings**: ~50% faster, ~30% cheaper than waiting for completion.
 
-**Trade-off**: This approach means we may miss reasoning that comes *after* the tool call. The 0.5s post-abort delay helps capture trailing reasoning, but it's not guaranteed.
+**Trade-off**: This approach captures reasoning that comes before or during the tool call, but may miss any reasoning the LLM would generate *after* the tool call if we hadn't aborted. Reasoning for a tool call comes before the point at which the too lis called, so should not be an issue. The 0.5s post-abort delay ensures cost/token metadata is populated correctly.
 
 ## Cost Tracking
 
