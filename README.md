@@ -31,6 +31,57 @@ uv run main.py --agent=random --game=ls20
 
 For more information, see the [documentation](https://three.arcprize.org/docs#quick-start) or the [tutorial video](https://youtu.be/xEVg9dcJMkw).
 
+## Claude Extended Thinking Agent
+
+The Claude Extended Thinking Agent is a sophisticated agent that leverages Claude Sonnet 4.5's extended thinking capabilities for abstract reasoning puzzles. It uses a hypothesis-driven exploration approach to discover game rules and solve puzzles.
+
+### Features
+
+- **Extended Thinking**: Uses Claude's extended thinking feature for deep, step-by-step reasoning
+- **Hypothesis Tracking**: Builds and evolves hypotheses about game mechanics
+- **Pattern Recognition**: Analyzes grid patterns, symmetries, and color distributions
+- **Stuck Detection**: Recognizes when exploration is needed vs exploitation
+- **Memory Management**: Maintains learnings across puzzle attempts
+
+### Setup
+
+1. Get an Anthropic API key from [console.anthropic.com](https://console.anthropic.com)
+2. Add your API key to `.env`:
+
+```bash
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+```
+
+3. Run the Claude Extended Thinking agent:
+
+```bash
+uv run main.py --agent=claudethinkingagent --game=ls20
+```
+
+### Architecture
+
+The agent follows a 5-stage reasoning loop:
+
+1. **Observe**: Converts grid frames to semantic descriptions
+2. **Reason**: Uses extended thinking to analyze patterns
+3. **Hypothesize**: Builds mental model of puzzle rules
+4. **Act**: Selects action based on hypothesis
+5. **Learn**: Updates hypothesis based on results
+
+### Configuration
+
+The agent can be configured by modifying these class attributes in `agents/templates/claude_thinking_agent.py`:
+
+- `MAX_ACTIONS = 200`: Maximum actions before stopping
+- `MODEL = "claude-sonnet-4-5-20250929"`: Claude model to use
+
+### Performance
+
+The Claude Extended Thinking Agent is designed for:
+- Abstract reasoning and pattern recognition tasks
+- Puzzles requiring hypothesis formation and testing
+- Environments where discovery of rules is key to success
+
 ## Changelog
 ## [0.9.3] - 2026-01-29
 **Note: This will be a breaking change is you use the fields outline below**
