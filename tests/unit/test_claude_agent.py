@@ -130,7 +130,7 @@ class TestClaudeThinkingAgent:
         grid = [[0, 1], [2, 3]]
         result = agent.describe_grid(grid)
 
-        assert "Grid size: 2x2" in result
+        assert "Grid: 2x2" in result
         assert "white" in result
         assert "light gray" in result
 
@@ -178,7 +178,7 @@ class TestClaudeThinkingAgent:
         assert "ACTION1" in prompt
         assert "ACTION2" in prompt
         assert "RESET" in prompt
-        assert "PATTERN OBSERVATION" in prompt
+        assert "reasoning puzzle" in prompt.lower()
         assert "HYPOTHESIS FORMATION" in prompt
 
     @patch("agents.templates.claude_thinking_agent.Anthropic")

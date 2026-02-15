@@ -118,7 +118,7 @@ class ClaudeThinkingAgent(Agent):
         # Don't clear hypothesis tracker - knowledge should carry over
 
     def describe_grid(self, grid: List[List[int]]) -> str:
-        """Convert grid to semantic description."""
+        """Convert grid to semantic description (optimized for token efficiency)."""
         if not grid or not grid[0]:
             return "Empty grid"
 
@@ -145,31 +145,33 @@ class ClaudeThinkingAgent(Agent):
             15: "purple",
         }
 
-        # Build description
-        desc = f"Grid size: {width}x{height} (width x height)\n\n"
+        # Build description - SIMPLIFIED to reduce tokens
+        desc = f"Grid: {width}x{height}. "
 
-        # Count colors
+        # Count only significant colors (>1% of grid)
         color_counts = {}
+        total_cells = width * height
         for row in grid:
             for cell in row:
                 color = color_names.get(cell, f"color-{cell}")
                 color_counts[color] = color_counts.get(color, 0) + 1
 
-        desc += "Color distribution:\n"
-        for color, count in sorted(
-            color_counts.items(), key=lambda x: x[1], reverse=True
-        ):
-            if count > 0:
-                desc += f"  - {color}: {count} cells\n"
-
-        # Add grid representation
-        desc += "\nGrid (top to bottom, left to right):\n"
-        for y, row in enumerate(grid):
-            row_desc = f"Row {y}: "
-            row_desc += ", ".join(
-                [color_names.get(cell, f"color-{cell}") for cell in row]
+        # Only include colors that are >1% of grid
+        significant_colors = [
+            (color, count)
+            for color, count in color_counts.items()
+            if count > total_cells * 0.01
+        ]
+        if significant_colors:
+            desc += "Colors: "
+            desc += ", ".join(
+                [
+                    f"{color}({count})"
+                    for color, count in sorted(
+                        significant_colors, key=lambda x: x[1], reverse=True
+                    )[:5]
+                ]
             )
-            desc += row_desc + "\n"
 
         return desc
 
@@ -241,60 +243,20 @@ class ClaudeThinkingAgent(Agent):
         else:
             available_actions = available_actions_raw
 
-        # Build comprehensive prompt
-        prompt = f"""You are solving an abstract reasoning puzzle game. This is a 2D grid-based game where you need to discover the rules through experimentation.
+        # Build OPTIMIZED prompt (shorter to save tokens)
+        recent_actions = [a["action"] for a in self.action_history[-3:]]
+        prompt = f"""Abstract reasoning puzzle. Discover rules through experimentation.
 
-CURRENT STATE:
 {current_grid_desc}
+State: {latest_frame.state.name} | Levels: {latest_frame.levels_completed}/{latest_frame.win_levels} | Action: {self.action_counter}
 
-GAME STATE: {latest_frame.state.name}
-LEVELS COMPLETED: {latest_frame.levels_completed}
-ACTIONS TAKEN SO FAR: {self.action_counter}
+Changes: {changes}
+Recent actions: {recent_actions}
 
-AVAILABLE ACTIONS:
-{", ".join(available_actions)}
-- ACTION1: MOVE_UP
-- ACTION2: MOVE_DOWN
-- ACTION3: MOVE_LEFT
-- ACTION4: MOVE_RIGHT
-- RESET: Start new level or reset current level
+Actions: ACTION1(up), ACTION2(down), ACTION3(left), ACTION4(right), RESET
 
-RECENT CHANGES:
-{changes}
-
-PREVIOUS KNOWLEDGE:
-{self.hypothesis_tracker.get_summary()}
-
-YOUR TASK:
-Think step-by-step to determine the best action. Consider:
-
-1. PATTERN OBSERVATION
-   - What patterns do you see in the grid?
-   - How did the grid change after the last action?
-   - Are there any symmetries or repeating elements?
-
-2. HYPOTHESIS FORMATION
-   - What might the game rules be?
-   - How do actions affect the grid?
-   - What is the goal/objective?
-
-3. ACTION SELECTION
-   - Which action would best test your hypothesis?
-   - Which action moves you closer to the goal?
-   - Should you explore or exploit current knowledge?
-
-Please think through this carefully and provide:
-1. Your detailed reasoning
-2. Your current hypothesis about game mechanics
-3. The action you want to take (one of: {", ".join(available_actions)})
-
-Format your response as JSON:
-{{
-    "reasoning": "your detailed step-by-step thinking",
-    "hypothesis": "your current understanding of game rules",
-    "action": "ACTION_NAME",
-    "confidence": "high/medium/low"
-}}
+Analyze patterns, form hypothesis, choose action. Respond in JSON:
+{{"reasoning": "brief analysis", "hypothesis": "game rules", "action": "ACTION_NAME", "confidence": "high/medium/low"}}
 """
         return prompt
 
@@ -304,11 +266,11 @@ Format your response as JSON:
             # Build messages
             messages = [{"role": "user", "content": prompt}]
 
-            # Call Claude with extended thinking
+            # Call Claude with extended thinking (reduced budget to save costs)
             response = self.client.messages.create(
                 model=self.MODEL,
-                max_tokens=4000,
-                thinking={"type": "enabled", "budget_tokens": 3000},
+                max_tokens=2000,
+                thinking={"type": "enabled", "budget_tokens": 1500},
                 messages=messages,
             )
 
@@ -425,6 +387,21 @@ Format your response as JSON:
         reasoning = response.get("reasoning", "No reasoning provided")
         hypothesis = response.get("hypothesis", "No hypothesis")
         confidence = response.get("confidence", "unknown")
+
+        # ANTI-STUCK MECHANISM: If same action repeated 3+ times with no progress, force different action
+        if len(self.action_history) >= 3:
+            last_3_actions = [a["action"] for a in self.action_history[-3:]]
+            if (
+                len(set(last_3_actions)) == 1
+                and last_3_actions[0] == action_name
+                and self.stuck_counter > 2
+            ):
+                # Force a different action
+                all_actions = ["ACTION1", "ACTION2", "ACTION3", "ACTION4"]
+                available = [a for a in all_actions if a != action_name]
+                action_name = available[self.stuck_counter % len(available)]
+                reasoning += f" [Auto-switched from repeated {last_3_actions[0]}]"
+                logger.info(f"Forced action change to break repetition: {action_name}")
 
         logger.info(f"Claude chose: {action_name} (confidence: {confidence})")
         logger.debug(f"Reasoning: {reasoning[:200]}...")
