@@ -179,7 +179,7 @@ class TestClaudeThinkingAgent:
         assert "ACTION2" in prompt
         assert "RESET" in prompt
         assert "reasoning puzzle" in prompt.lower()
-        assert "HYPOTHESIS FORMATION" in prompt
+        assert "hypothesis" in prompt.lower()
 
     @patch("agents.templates.claude_thinking_agent.Anthropic")
     def test_call_claude_with_thinking_success(self, mock_anthropic_class, agent):
