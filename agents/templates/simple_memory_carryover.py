@@ -78,7 +78,7 @@ class SimpleMemoryCarryover(Agent):
         return f"{super().name}.{sanitized_model_name}.memory-carryover"
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
-        return latest_frame.state is GameState.WIN
+        return latest_frame.state is GameState.WIN or self._force_exit
 
     def choose_action(
         self, frames: list[FrameData], latest_frame: FrameData
