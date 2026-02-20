@@ -21,3 +21,5 @@ tests/recordings/not-a-recording.txt
 memory.db
 
 environment_files/
+recordings/
+game_notes/
