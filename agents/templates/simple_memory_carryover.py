@@ -8,7 +8,8 @@ import uuid
 from typing import Any
 
 from arcengine import FrameData, GameAction, GameState
-from openai import AuthenticationError, BadRequestError, OpenAI as OpenAIClient
+from openai import AuthenticationError, BadRequestError
+from openai import OpenAI as OpenAIClient
 
 from ..agent import Agent
 
@@ -37,7 +38,7 @@ class SimpleMemoryCarryover(Agent):
 
     RECORDINGS_DIR_ENV = "RECORDINGS_DIR"
     BASE_URL = "https://openrouter.ai/api/v1"
-    MODEL = "google/gemini-3.1-pro-preview"
+    MODEL = "anthropic/claude-opus-4.6"
 
     ENABLE_CHAT_LOG = True
     ENABLE_TURN_LOG = True
@@ -129,7 +130,7 @@ class SimpleMemoryCarryover(Agent):
                 self.carryover_memory = self._extract_memory(args)
                 self.consecutive_parse_failures = 0
                 self._consecutive_fallbacks = 0
-                timestamps = {
+                timestamps: dict[str, float | None] = {
                     "turn_start": turn_start,
                     "llm_request_sent": llm_request_sent,
                     "llm_response_received": llm_response_received,
@@ -178,7 +179,13 @@ class SimpleMemoryCarryover(Agent):
                 raise RuntimeError(
                     "OpenRouter authentication failed. Check OPENROUTER_API_KEY."
                 ) from e
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError, BadRequestError) as e:
+            except (
+                json.JSONDecodeError,
+                KeyError,
+                TypeError,
+                ValueError,
+                BadRequestError,
+            ) as e:
                 last_error = f"{type(e).__name__}: {e}"
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
@@ -195,7 +202,10 @@ class SimpleMemoryCarryover(Agent):
         error = last_error or "Action selection failed after retries."
 
         if not self.DETERMINISTIC_FALLBACK:
-            logger.warning("All %s LLM attempts failed and DETERMINISTIC_FALLBACK is off. Ending game.", max_attempts)
+            logger.warning(
+                "All %s LLM attempts failed and DETERMINISTIC_FALLBACK is off. Ending game.",
+                max_attempts,
+            )
             self._force_exit = True
             action = GameAction.RESET
         else:
@@ -251,10 +261,12 @@ class SimpleMemoryCarryover(Agent):
         if action.is_complex():
             data = action.action_data.model_dump()
             action_label = f"{action.name} x={data.get('x')} y={data.get('y')}"
-        self._turn_history.append((latest_frame.frame, action_label, self.carryover_memory))
+        self._turn_history.append(
+            (latest_frame.frame, action_label, self.carryover_memory)
+        )
         max_keep = self.HISTORY_LENGTH * 2
         if len(self._turn_history) > max_keep:
-            self._turn_history = self._turn_history[-self.HISTORY_LENGTH:]
+            self._turn_history = self._turn_history[-self.HISTORY_LENGTH :]
 
     def _build_system_prompt(
         self, available_actions: list[GameAction], latest_state: GameState
@@ -269,21 +281,19 @@ class SimpleMemoryCarryover(Agent):
         non_click_actions_inline = ", ".join(non_click_action_names) or "<none>"
         action_mappings = self._available_action_mappings(available_actions)
         action6_available = GameAction.ACTION6 in available_actions
-        game_state = latest_state.name if isinstance(latest_state, GameState) else str(latest_state)
+        game_state = (
+            latest_state.name
+            if isinstance(latest_state, GameState)
+            else str(latest_state)
+        )
         action6_rule = ""
         action6_format_rule = ""
         non_click_format_rule = ""
         if non_click_action_names:
-            non_click_format_rule = (
-                f"- For non-click actions, use `<action>ACTION_NAME</action>` where ACTION_NAME is one of ({non_click_actions_inline})\n"
-            )
+            non_click_format_rule = f"- For non-click actions, use `<action>ACTION_NAME</action>` where ACTION_NAME is one of ({non_click_actions_inline})\n"
         if action6_available:
-            action6_rule = (
-                "- If you choose ACTION6, you must also provide integer x and y in [0,63].\n"
-            )
-            action6_format_rule = (
-                "- For ACTION6, provide coordinates as `<action>ACTION6 x=<int> y=<int></action>`\n"
-            )
+            action6_rule = "- If you choose ACTION6, you must also provide integer x and y in [0,63].\n"
+            action6_format_rule = "- For ACTION6, provide coordinates as `<action>ACTION6 x=<int> y=<int></action>`\n"
 
         example_parts: list[str] = []
         if non_click_action_names:
@@ -371,10 +381,12 @@ Formatting rules:
         if history_text:
             sections.extend(["HISTORY:", history_text, ""])
 
-        sections.extend([
-            "CURRENT_FRAME:",
-            self._pretty_print_3d(animation_frames),
-        ])
+        sections.extend(
+            [
+                "CURRENT_FRAME:",
+                self._pretty_print_3d(animation_frames),
+            ]
+        )
 
         return "\n".join(sections).strip()
 
@@ -382,7 +394,7 @@ Formatting rules:
         if not self._turn_history:
             return ""
 
-        recent = self._turn_history[-self.HISTORY_LENGTH:]
+        recent = self._turn_history[-self.HISTORY_LENGTH :]
         total_history = len(self._turn_history)
         start_index = total_history - len(recent)
 
@@ -399,7 +411,9 @@ Formatting rules:
 
         return "\n".join(parts).strip()
 
-    def _interpolate_frames(self, frames: list[list[list[Any]]]) -> list[list[list[Any]]]:
+    def _interpolate_frames(
+        self, frames: list[list[list[Any]]]
+    ) -> list[list[list[Any]]]:
         n = len(frames)
         max_frames = self.MAX_ANIMATION_FRAMES
         if n <= max_frames:
@@ -411,14 +425,14 @@ Formatting rules:
         indices = [round(i * (n - 1) / (max_frames - 1)) for i in range(max_frames)]
         return [frames[idx] for idx in indices]
 
-    def _build_turn_data_text(
-        self, latest_frame: FrameData
-    ) -> str:
+    def _build_turn_data_text(self, latest_frame: FrameData) -> str:
         state_name = self._frame_state_name(latest_frame)
         levels_completed = self._coerce_optional_int(
             getattr(latest_frame, "levels_completed", None)
         )
-        win_levels = self._coerce_optional_int(getattr(latest_frame, "win_levels", None))
+        win_levels = self._coerce_optional_int(
+            getattr(latest_frame, "win_levels", None)
+        )
         current_level_index = self._current_level_index(levels_completed, win_levels)
 
         lines = [
@@ -430,7 +444,7 @@ Formatting rules:
     def _frame_state_name(self, frame: FrameData) -> str:
         state = getattr(frame, "state", None)
         if isinstance(state, GameState):
-            return state.name
+            return str(state.name)
         return str(state)
 
     def _coerce_optional_int(self, value: Any) -> int | None:
@@ -528,8 +542,10 @@ Formatting rules:
         )
         matches = pattern.findall(response_text)
         if not matches:
-            raise ValueError(f"Missing <{tag_name}>...</{tag_name}> block in model output.")
-        return matches[-1].strip()
+            raise ValueError(
+                f"Missing <{tag_name}>...</{tag_name}> block in model output."
+            )
+        return str(matches[-1]).strip()
 
     def _parse_action_text(self, action_text: str) -> dict[str, Any]:
         payload = action_text.strip()
@@ -606,8 +622,12 @@ Formatting rules:
 
     def _parse_coordinates(self, args: dict[str, Any]) -> tuple[int | None, int | None]:
         try:
-            x = int(args.get("x"))
-            y = int(args.get("y"))
+            x_raw = args.get("x")
+            y_raw = args.get("y")
+            if x_raw is None or y_raw is None:
+                return None, None
+            x = int(x_raw)
+            y = int(y_raw)
         except (TypeError, ValueError):
             return None, None
         if not (0 <= x <= 63 and 0 <= y <= 63):
@@ -769,9 +789,7 @@ Formatting rules:
             directory = "recordings"
         os.makedirs(directory, exist_ok=True)
 
-        filename = (
-            f"{self.name}.{self._conversation_log_session_id}.turnlog.jsonl"
-        )
+        filename = f"{self.name}.{self._conversation_log_session_id}.turnlog.jsonl"
         return os.path.join(directory, filename)
 
     def _log_turn_jsonl(

@@ -51,4 +51,5 @@ __all__ = [
     "Playback",
     "AVAILABLE_AGENTS",
     "MultiModalLLM",
+    "ArcAgent",
 ]
