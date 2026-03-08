@@ -135,7 +135,7 @@ class Agent(ABC):
         raw = self.arc_env.step(
             action,
             data=data,
-            reasoning=data["reasoning"] if "reasoning" in data else {},
+            reasoning=action.reasoning,
         )
         return self._convert_raw_frame_data(raw)
 
