@@ -18,7 +18,7 @@ class PlaybackAgent(Agent):
     ACTIONS_PER_SECOND = 5  
     
     _rate_lock = threading.Lock()
-    _last_action_time = 0.0
+    _next_available_time = 0.0
     
     _recorded_actions: list[dict[str, Any]]
     _current_action_data: Optional[dict[str, Any]]
@@ -59,6 +59,19 @@ class PlaybackAgent(Agent):
                     if isinstance(data := event.get("data"), dict) and "action_input" in data:
                         actions.append(event)
         return actions
+
+    @classmethod
+    def _wait_for_global_rate_limit(cls) -> None:
+        min_interval = 1.0 / cls.ACTIONS_PER_SECOND
+
+        with cls._rate_lock:
+            now = time.monotonic()
+            scheduled_time = max(now, cls._next_available_time)
+            cls._next_available_time = scheduled_time + min_interval
+
+        delay = scheduled_time - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
     
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
         return self.action_counter >= len(self._recorded_actions)
@@ -73,17 +86,7 @@ class PlaybackAgent(Agent):
         if self._current_action_data:
             self._current_action_data["game_id"] = self.game_id
  
-        # rate limiting wait until it's our turn
-        with self._rate_lock:
-            now = time.time()
-            time_since_last = now - PlaybackAgent._last_action_time
-            min_interval = 1.0 / self.ACTIONS_PER_SECOND
-            
-            if time_since_last < min_interval:
-                sleep_time = min_interval - time_since_last
-                time.sleep(sleep_time)
-            
-            PlaybackAgent._last_action_time = time.time()
+        self._wait_for_global_rate_limit()
         
         return GameAction.from_id(action_input["id"])
     
