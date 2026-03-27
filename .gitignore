@@ -20,4 +20,7 @@ tests/recordings/not-a-recording.txt
 # Long-term memory
 memory.db
 
+# TRM Agent memory files
+pmll_memory.jsonl
+
 environment_files/
