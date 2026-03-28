@@ -37,6 +37,7 @@ class Swarm:
         ROOT_URL: str,
         games: list[str],
         tags: list[str] = [],
+        arcade: Optional[Arcade] = None,
     ) -> None:
         from . import AVAILABLE_AGENTS
 
@@ -52,7 +53,7 @@ class Swarm:
             "Accept": "application/json",
         }
         self.tags = tags.copy() if tags is not None else []
-        self._arc = Arcade()
+        self._arc = arcade if arcade is not None else Arcade()
 
         # Set up base tags for tracing
         if self.agent_name.endswith(".recording.jsonl"):
