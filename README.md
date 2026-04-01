@@ -17,7 +17,7 @@ cd ARC-AGI-3-Agents
 cp .env.example .env
 ```
 
-3. Get an API key from the [ARC-AGI-3 Website](https://three.arcprize.org/) and set it as an environment variable in your .env file.
+3. Get an API key from the [ARC-AGI-3 Website](https://arcprize.org/platform) and set it as an environment variable in your .env file.
 
 ```bash
 export ARC_API_KEY="your_api_key_here"
@@ -29,7 +29,7 @@ export ARC_API_KEY="your_api_key_here"
 uv run main.py --agent=random --game=ls20
 ```
 
-For more information, see the [documentation](https://three.arcprize.org/docs#quick-start) or the [tutorial video](https://youtu.be/xEVg9dcJMkw).
+For more information, see the [documentation](https://arcprize.org/docs#quick-start) or the [tutorial video](https://youtu.be/xEVg9dcJMkw).
 
 ## Changelog
 ## [0.9.3] - 2026-01-29
@@ -130,7 +130,7 @@ To run the tests, you will need to have `pytest` installed. Run the tests like t
 pytest
 ```
 
-For more information on tests, please see the [tests documentation](https://three.arcprize.org/docs#testing).
+For more information on tests, please see the [tests documentation](https://arcprize.org/docs#testing).
 
 ## License
 

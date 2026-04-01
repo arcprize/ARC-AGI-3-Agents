@@ -17,7 +17,7 @@ cd ARC-AGI-3-Agents
 cp .env-example .env
 ```
 
-3. Get an API key from the [ARC-AGI-3 website](https://three.arcprize.org/) and set it in `.env` (or export it):
+3. Get an API key from the [ARC-AGI-3 website](https://arcprize.org/) and set it in `.env` (or export it):
 
 ```bash
 export ARC_API_KEY="your_api_key_here"
@@ -29,7 +29,7 @@ export ARC_API_KEY="your_api_key_here"
 uv run main.py --agent=random --game=locksmith
 ```
 
-For more details see the full docs at <https://three.arcprize.org/docs>.
+For more details see the full docs at <https://arcprize.org/docs>.
 
 ---
 
@@ -85,7 +85,7 @@ Run the Python test-suite with `pytest`:
 pytest
 ```
 
-See <https://three.arcprize.org/docs#testing> for more info.
+See <https://arcprize.org/docs#testing> for more info.
 
 ---
 
@@ -98,7 +98,7 @@ The core agent framework lives in [`agents/`](https://github.com/arcprize/ARC-AG
 - `recorder.py` – JSONL gameplay recording utilities.
 - `structs.py` – typed data structures (`FrameData`, `GameAction`, etc.).
 
-See the concise README in that folder or jump straight to the online docs → [Agent Quick-Start](https://three.arcprize.org/docs#agent-quickstart).
+See the concise README in that folder or jump straight to the online docs → [Agent Quick-Start](https://arcprize.org/docs#agent-quickstart).
 
 ## Agent Templates
 
@@ -108,8 +108,8 @@ Ready-made templates live in [`agents/templates/`](https://github.com/arcprize/A
 • **Third-party integrations** – HuggingFace *smolagents*, AgentOps tracing & reasoning agent, LangChain/LangGraph agents.
 
 Browse them on GitHub or read the docs:
-- Standard templates: <https://three.arcprize.org/docs#building-agents>
-- Third-party templates: <https://three.arcprize.org/docs#third-party-templates>
+- Standard templates: <https://arcprize.org/docs#building-agents>
+- Third-party templates: <https://arcprize.org/docs#third-party-templates>
 
 ---
 
