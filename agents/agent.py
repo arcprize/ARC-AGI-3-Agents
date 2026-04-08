@@ -132,10 +132,11 @@ class Agent(ABC):
 
     def do_action_request(self, action: GameAction) -> FrameData:
         data = action.action_data.model_dump()
+        reasoning = getattr(action, "reasoning", data.get("reasoning", {}))
         raw = self.arc_env.step(
             action,
             data=data,
-            reasoning=data["reasoning"] if "reasoning" in data else {},
+            reasoning=reasoning,
         )
         return self._convert_raw_frame_data(raw)
 
