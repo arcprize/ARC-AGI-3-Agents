@@ -3,7 +3,7 @@ import shutil
 
 import pytest
 
-from agents.structs import FrameData, GameState
+from arcengine import FrameData, GameState
 
 
 def get_test_recordings_dir():
@@ -47,7 +47,7 @@ def sample_frame():
         game_id="test-game",
         frame=[[[1, 2], [3, 4]]],
         state=GameState.NOT_FINISHED,
-        score=5,
+        levels_completed=5,
     )
 
 
