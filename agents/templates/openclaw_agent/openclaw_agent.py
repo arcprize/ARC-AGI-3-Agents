@@ -162,9 +162,9 @@ class OpenClaw(Agent):
                 action.set_data({"x": 32, "y": 32})
         return action
 
-    # Truncation limits keep the payload under arcengine's 16 KB cap
-    # (MAX_REASONING_BYTES, enums.py:14).
-    _MAX_THOUGHT_CHARS = 1000
+    # Mirror of arcengine.enums.MAX_REASONING_BYTES. Structured-field caps
+    # below are defensive; the final size enforcement is what guarantees fit.
+    _MAX_REASONING_BYTES = 16 * 1024
     _MAX_ALT_CHARS = 200
     _MAX_ALTS = 5
 
@@ -176,7 +176,7 @@ class OpenClaw(Agent):
         src = blob if parsed else {}
 
         thought_raw = src.get("thought")
-        thought = str(thought_raw).strip()[: cls._MAX_THOUGHT_CHARS] if thought_raw else ""
+        thought = str(thought_raw).strip() if thought_raw else ""
         if not thought:
             thought = "(no thought provided)" if parsed else "(parse failed)"
 
@@ -192,12 +192,32 @@ class OpenClaw(Agent):
         else:
             alternatives = []
 
-        return {
+        return cls._enforce_size({
             "thought": thought,
             "confidence": confidence,
             "alternatives_considered": alternatives,
             "reasoning_tokens": 0,
-        }
+        })
+
+    @classmethod
+    def _enforce_size(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        # Trim `thought` (the largest, least-structured field) until the JSON
+        # payload fits under arcengine's MAX_REASONING_BYTES cap. The doc
+        # emphasizes keeping the justification, so trimming it is preferable
+        # to letting the server reject the whole step.
+        while True:
+            raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            excess = len(raw) - cls._MAX_REASONING_BYTES
+            if excess <= 0:
+                return payload
+            thought = payload.get("thought", "")
+            if not thought:
+                return payload  # nothing left to trim
+            # Drop excess chars plus a small margin to absorb JSON-escape growth.
+            new_len = max(0, len(thought) - excess - 16)
+            if new_len >= len(thought):
+                return payload  # no progress possible
+            payload["thought"] = thought[:new_len]
 
     def _track_tokens(self, tokens: int, content: str) -> None:
         self.token_counter += tokens

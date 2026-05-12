@@ -123,9 +123,11 @@ toolkit reasoning-logs docs][reasoning-docs] alongside the action:
 }
 ```
 
-`thought` is clipped to 1000 chars, `alternatives_considered` to 5 items × 200
-chars each, and `confidence` is clamped to `[0,1]`. These limits keep the
-payload well under `arcengine`'s 16 KB cap (`MAX_REASONING_BYTES`).
+`alternatives_considered` is clipped to 5 items × 200 chars each, and
+`confidence` is clamped to `[0,1]`. `thought` passes through verbatim; the
+agent only trims it if the full JSON payload would exceed `arcengine`'s 16 KB
+cap (`MAX_REASONING_BYTES`), preserving as much justification as possible for
+trace analysis.
 
 `reasoning_tokens` reads `response.usage.completion_tokens_details.reasoning_tokens`.
 OpenClaw's compat layer doesn't surface that telemetry today (verified against

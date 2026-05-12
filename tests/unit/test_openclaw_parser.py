@@ -178,9 +178,23 @@ class TestExtractReasoning:
         assert out["alternatives_considered"][0] == "42"
         assert out["alternatives_considered"][1] == "x" * 200
 
-    def test_long_thought_truncated(self) -> None:
+    def test_thought_under_cap_passes_unchanged(self) -> None:
+        # Below 16 KB the model's thought passes through verbatim — the
+        # reviewer's trace-analysis use case relies on this.
         out = OpenClaw._extract_reasoning({"action": "ACTION1", "thought": "a" * 5000})
-        assert len(out["thought"]) == 1000
+        assert out["thought"] == "a" * 5000
+
+    def test_thought_over_cap_truncated_to_fit(self) -> None:
+        import json as _json
+        out = OpenClaw._extract_reasoning(
+            {"action": "ACTION1", "thought": "a" * 20000}
+        )
+        # The full JSON payload (not just thought) must fit under the cap.
+        size = len(_json.dumps(out, separators=(",", ":")).encode("utf-8"))
+        assert size <= 16 * 1024
+        # Thought is trimmed from the end, structure preserved.
+        assert out["thought"].startswith("a")
+        assert len(out["thought"]) < 20000
 
 
 @pytest.mark.unit
