@@ -115,6 +115,96 @@ class TestParseAction:
 
 
 @pytest.mark.unit
+class TestExtractReasoning:
+    """Cover _extract_reasoning: builds the four doc-listed fields with
+    consistent shape regardless of what the model returned."""
+
+    def test_happy_path(self) -> None:
+        blob = {
+            "action": "ACTION1",
+            "thought": "Player is below the door; move up.",
+            "confidence": 0.78,
+            "alternatives_considered": ["ACTION4 to test wall", "ACTION5 to wait"],
+        }
+        assert OpenClaw._extract_reasoning(blob) == {
+            "thought": "Player is below the door; move up.",
+            "confidence": 0.78,
+            "alternatives_considered": ["ACTION4 to test wall", "ACTION5 to wait"],
+            "reasoning_tokens": 0,
+        }
+
+    def test_missing_fields_get_defaults(self) -> None:
+        assert OpenClaw._extract_reasoning({"action": "ACTION1"}) == {
+            "thought": "(no thought provided)",
+            "confidence": 0.0,
+            "alternatives_considered": [],
+            "reasoning_tokens": 0,
+        }
+
+    def test_parse_failed_blob_marks_thought(self) -> None:
+        # blob=None means the parser couldn't extract any JSON at all.
+        out = OpenClaw._extract_reasoning(None)
+        assert out["thought"] == "(parse failed)"
+
+    def test_confidence_above_one_clamped(self) -> None:
+        out = OpenClaw._extract_reasoning({"action": "ACTION1", "confidence": 1.7})
+        assert out["confidence"] == 1.0
+
+    def test_confidence_below_zero_clamped(self) -> None:
+        out = OpenClaw._extract_reasoning({"action": "ACTION1", "confidence": -0.3})
+        assert out["confidence"] == 0.0
+
+    def test_confidence_non_numeric_falls_back_to_zero(self) -> None:
+        out = OpenClaw._extract_reasoning({"action": "ACTION1", "confidence": "high"})
+        assert out["confidence"] == 0.0
+
+    def test_alternatives_non_list_falls_back_to_empty(self) -> None:
+        out = OpenClaw._extract_reasoning(
+            {"action": "ACTION1", "alternatives_considered": "not a list"}
+        )
+        assert out["alternatives_considered"] == []
+
+    def test_alternatives_truncated_to_five_items(self) -> None:
+        out = OpenClaw._extract_reasoning(
+            {"action": "ACTION1", "alternatives_considered": list("abcdefgh")}
+        )
+        assert out["alternatives_considered"] == ["a", "b", "c", "d", "e"]
+
+    def test_alternatives_items_coerced_to_str_and_truncated(self) -> None:
+        long = "x" * 500
+        out = OpenClaw._extract_reasoning(
+            {"action": "ACTION1", "alternatives_considered": [42, long]}
+        )
+        assert out["alternatives_considered"][0] == "42"
+        assert out["alternatives_considered"][1] == "x" * 200
+
+    def test_long_thought_truncated(self) -> None:
+        out = OpenClaw._extract_reasoning({"action": "ACTION1", "thought": "a" * 5000})
+        assert len(out["thought"]) == 1000
+
+
+@pytest.mark.unit
+class TestParseActionWithReasoningBlob:
+    """The regex extractor must handle JSON with nested arrays
+    (e.g. alternatives_considered) when buried in prose or fences."""
+
+    def test_blob_with_alternatives_array(self) -> None:
+        text = '{"action":"ACTION2","thought":"go down","confidence":0.5,"alternatives_considered":["a","b"]}'
+        action = _bare_agent()._parse_action(_Msg(text), None)  # type: ignore[arg-type]
+        assert action is GameAction.ACTION2
+
+    def test_blob_with_alternatives_array_inside_prose(self) -> None:
+        text = 'Here you go: {"action":"ACTION3","alternatives_considered":["x","y","z"]}'
+        action = _bare_agent()._parse_action(_Msg(text), None)  # type: ignore[arg-type]
+        assert action is GameAction.ACTION3
+
+    def test_markdown_fence_with_array(self) -> None:
+        text = '```json\n{"action":"ACTION1","alternatives_considered":["a"]}\n```'
+        action = _bare_agent()._parse_action(_Msg(text), None)  # type: ignore[arg-type]
+        assert action is GameAction.ACTION1
+
+
+@pytest.mark.unit
 class TestActionNames:
     """Cover _action_names: it gets a list of available actions and must
     normalize ints, strings, and GameAction members to canonical names."""

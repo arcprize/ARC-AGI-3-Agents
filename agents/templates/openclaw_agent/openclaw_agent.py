@@ -96,33 +96,41 @@ class OpenClaw(Agent):
         if response.usage:
             self._track_tokens(response.usage.total_tokens, msg.content or "")
 
-        return self._parse_action(msg, latest_frame)
-
-    _JSON_BLOB = re.compile(r"\{[^{}]*\"action\"[^{}]*\}", re.DOTALL)
+        blob = self._parse_blob(msg)
+        action = self._action_from_blob(blob)
+        action.reasoning = self._extract_reasoning(blob)
+        return action
 
     def _parse_action(
         self, msg: Any, latest_frame: FrameData
     ) -> GameAction:
-        # The inline prompt asks for one JSON object naming the action. Tolerate
-        # stray whitespace, markdown fences, or leading prose by extracting the
-        # first {...} block containing "action".
-        text = (msg.content or "").strip()
-        blob = None
-        if text:
-            try:
-                blob = json.loads(text)
-            except json.JSONDecodeError:
-                match = self._JSON_BLOB.search(text)
-                if match:
-                    try:
-                        blob = json.loads(match.group(0))
-                    except json.JSONDecodeError:
-                        blob = None
+        return self._action_from_blob(self._parse_blob(msg))
 
+    _JSON_BLOB = re.compile(r"\{[^{}]*\"action\"[^{}]*\}", re.DOTALL)
+
+    def _parse_blob(self, msg: Any) -> Optional[dict[str, Any]]:
+        text = (msg.content or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        match = self._JSON_BLOB.search(text)
+        if match is None:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _action_from_blob(self, blob: Optional[dict[str, Any]]) -> GameAction:
         if not isinstance(blob, dict) or "action" not in blob:
             logger.warning(
-                f"OpenClaw reply did not parse to action JSON; "
-                f"falling back to ACTION5. raw={text[:200]!r}"
+                "OpenClaw reply did not parse to action JSON; falling back to ACTION5."
             )
             return GameAction.ACTION5
 
@@ -153,6 +161,43 @@ class OpenClaw(Agent):
             except (TypeError, ValueError):
                 action.set_data({"x": 32, "y": 32})
         return action
+
+    # Truncation limits keep the payload under arcengine's 16 KB cap
+    # (MAX_REASONING_BYTES, enums.py:14).
+    _MAX_THOUGHT_CHARS = 1000
+    _MAX_ALT_CHARS = 200
+    _MAX_ALTS = 5
+
+    @classmethod
+    def _extract_reasoning(cls, blob: Optional[dict[str, Any]]) -> dict[str, Any]:
+        # reasoning_tokens stays 0: OpenClaw v2026.5.7's normalizeUsage has
+        # no reasoning slot. Read the real field here if OpenClaw forwards it.
+        parsed = isinstance(blob, dict)
+        src = blob if parsed else {}
+
+        thought_raw = src.get("thought")
+        thought = str(thought_raw).strip()[: cls._MAX_THOUGHT_CHARS] if thought_raw else ""
+        if not thought:
+            thought = "(no thought provided)" if parsed else "(parse failed)"
+
+        try:
+            confidence = float(src.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = max(0.0, min(1.0, confidence))
+
+        raw_alts = src.get("alternatives_considered")
+        if isinstance(raw_alts, list):
+            alternatives = [str(a)[: cls._MAX_ALT_CHARS] for a in raw_alts[: cls._MAX_ALTS]]
+        else:
+            alternatives = []
+
+        return {
+            "thought": thought,
+            "confidence": confidence,
+            "alternatives_considered": alternatives,
+            "reasoning_tokens": 0,
+        }
 
     def _track_tokens(self, tokens: int, content: str) -> None:
         self.token_counter += tokens
@@ -186,13 +231,22 @@ class OpenClaw(Agent):
             control.
 
             After any tool use, your FINAL response must be one JSON object
-            naming the action to take. No prose around it, no markdown fence.
+            containing the action AND a brief reasoning trace. No prose
+            around it, no markdown fence.
+
+            Required keys:
+              "action": one of "RESET", "ACTION1".."ACTION5", "ACTION7",
+                       or "ACTION6" with extra integer "x","y" in [0,63].
+              "thought": one short sentence (<=200 chars) on why this action.
+              "confidence": number in [0,1] (use 0.5 if unsure).
+              "alternatives_considered": array of up to 4 short strings
+                                         describing other actions weighed
+                                         (use [] if none).
 
             Examples (use these literal string values for "action"):
-              {{"action":"ACTION1"}}
-              {{"action":"ACTION3"}}
-              {{"action":"ACTION6","x":12,"y":34}}
-              {{"action":"RESET"}}
+              {{"action":"ACTION1","thought":"Player is below the door; moving up should advance.","confidence":0.8,"alternatives_considered":["ACTION4 to test right wall"]}}
+              {{"action":"ACTION6","x":12,"y":34,"thought":"Click the lone red square.","confidence":0.6,"alternatives_considered":[]}}
+              {{"action":"RESET","thought":"State is GAME_OVER; restart.","confidence":1.0,"alternatives_considered":[]}}
 
             Action meanings:
               "RESET"=start/restart.

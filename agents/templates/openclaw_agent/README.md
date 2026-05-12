@@ -108,3 +108,29 @@ uv run main.py --agent=openclaw --game=ls20
   is serialized as hex text. If you want a multimodal variant later, you'd add
   `image_url` content blocks and verify the configured underlying model
   accepts them.
+
+## Reasoning fields
+
+Each turn's JSON reply must include the four fields described in the [ARC
+toolkit reasoning-logs docs][reasoning-docs] alongside the action:
+
+```json
+{
+  "action": "ACTION1",
+  "thought": "Player is below the door; moving up should advance.",
+  "confidence": 0.8,
+  "alternatives_considered": ["ACTION4 to test right wall"]
+}
+```
+
+`thought` is clipped to 1000 chars, `alternatives_considered` to 5 items × 200
+chars each, and `confidence` is clamped to `[0,1]`. These limits keep the
+payload well under `arcengine`'s 16 KB cap (`MAX_REASONING_BYTES`).
+
+`reasoning_tokens` reads `response.usage.completion_tokens_details.reasoning_tokens`.
+OpenClaw's compat layer doesn't surface that telemetry today (verified against
+v2026.5.7's `normalizeUsage`, which has no reasoning/thinking slot), so the
+field reports `0` for OpenClaw replies. It will populate automatically once
+the gateway forwards the upstream provider's reasoning-token count.
+
+[reasoning-docs]: https://docs.arcprize.org/toolkit/submit-action#including-reasoning-logs
