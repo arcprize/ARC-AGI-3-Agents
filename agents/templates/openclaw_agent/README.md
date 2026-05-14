@@ -102,13 +102,18 @@ onboarding. To compare providers without editing that file, export
 ```bash
 OPENCLAW_MODEL=anthropic/claude-opus-4-7 uv run main.py --agent=openclaw --game=ls20
 OPENCLAW_MODEL=openai/gpt-5              uv run main.py --agent=openclaw --game=ls20
+OPENCLAW_MODEL=google/gemini-2.5-pro     uv run main.py --agent=openclaw --game=ls20
 ```
 
 `OPENCLAW_AGENT` (default `openclaw/default`) selects the OpenClaw *agent
 slug* (which tools/prompts it uses); `OPENCLAW_MODEL` overrides the
 underlying *provider model* for that agent. The override is also folded
 into the agent's recorder subdirectory name so per-model traces don't
-collide.
+collide. To enable a provider, drop its key into `docker/.env`
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) and
+`docker compose up -d --force-recreate`. The compose startup strips the
+daemon's per-agent model allowlist so any provider with a key is
+callable — no manual config edits needed.
 
 ## Notes
 
