@@ -125,9 +125,7 @@ class OpenClaw(Agent):
 
         blob = self._parse_blob(msg)
         action = self._action_from_blob(blob)
-        # GameAction.reasoning is set dynamically by the toolkit (same pattern
-        # as agents/agent.py:259, random_agent.py, multimodal.py).
-        action.reasoning = self._extract_reasoning(blob)  # type: ignore[attr-defined]
+        action.reasoning = self._extract_reasoning(blob)
         return action
 
     def _parse_action(self, msg: Any, latest_frame: FrameData) -> GameAction:
