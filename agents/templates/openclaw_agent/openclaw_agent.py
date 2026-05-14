@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import textwrap
+import uuid
 from typing import Any, Optional
 
 import openai
@@ -21,6 +22,13 @@ from openai import OpenAI as OpenAIClient
 from ...agent import Agent
 
 logger = logging.getLogger()
+
+# One run-id per Python process: every fresh `uv run main.py` gets a new
+# value, so OpenClaw's server-side session memory starts blank each run.
+# Multiple games inside one Swarm run share the same suffix, which is fine —
+# their card_id/game_id still keep the per-game sessions distinct. Override
+# with OPENCLAW_RUN_ID=<name> to pin a stable, resumable session.
+_RUN_ID = os.environ.get("OPENCLAW_RUN_ID") or uuid.uuid4().hex[:8]
 
 
 class OpenClaw(Agent):
@@ -34,8 +42,13 @@ class OpenClaw(Agent):
     token_counter: int
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        # Parent __init__ uses self.name, which reads self.model — set it first.
+        # Parent __init__ uses self.name, which reads self.model and the
+        # model override — set both before super().__init__.
         self.model = os.environ.get("OPENCLAW_AGENT", self.DEFAULT_AGENT)
+        # OPENCLAW_MODEL overrides the gateway's configured default model
+        # per-request (sent as x-openclaw-model on each call) so callers
+        # can compare providers without editing ~/.openclaw/openclaw.json.
+        self._model_override = os.environ.get("OPENCLAW_MODEL") or None
         super().__init__(*args, **kwargs)
         self.token_counter = 0
         base_url = os.environ.get("OPENCLAW_BASE_URL", self.DEFAULT_BASE_URL)
@@ -44,7 +57,9 @@ class OpenClaw(Agent):
         # below pins all turns of one game to a persistent agent session
         # so OpenClaw retains conversation history server-side — that's
         # why choose_action only sends the new user message each turn.
-        self._session_key = f"arc:{self.card_id}:{self.game_id}"
+        # The _RUN_ID suffix rotates the key every process so a new
+        # `uv run main.py` starts with blank server-side memory.
+        self._session_key = f"arc:{self.card_id}:{self.game_id}:{_RUN_ID}"
         self._client = OpenAIClient(
             base_url=base_url,
             api_key=token or "no-auth",  # required by SDK; ignored when auth.mode=none
@@ -52,12 +67,16 @@ class OpenClaw(Agent):
         )
         logger.info(
             f"OpenClaw agent for {self.game_id} -> {base_url} model={self.model} "
+            f"model_override={self._model_override or '(none)'} "
             f"session={self._session_key}"
         )
 
     @property
     def name(self) -> str:
-        sanitized = self.model.replace("/", "-").replace(":", "-")
+        parts = [self.model]
+        if self._model_override:
+            parts.append(self._model_override)
+        sanitized = ".".join(p.replace("/", "-").replace(":", "-") for p in parts)
         return f"{super().name}.{sanitized}"
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
@@ -81,10 +100,18 @@ class OpenClaw(Agent):
         # field for some providers (verified May 2026 against Anthropic),
         # so the agent uses a JSON-in-text protocol instead.
         prompt = self._build_prompt(latest_frame)
+        # `model` here is the OpenClaw agent slug; the underlying provider
+        # model is whatever that agent's primary is in ~/.openclaw/openclaw.json.
+        # OPENCLAW_MODEL, if set, overrides the provider model per request via
+        # the documented x-openclaw-model header.
+        extra_headers = (
+            {"x-openclaw-model": self._model_override} if self._model_override else None
+        )
         try:
             response = self._client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
+                extra_headers=extra_headers,
             )
         except openai.BadRequestError as e:
             logger.error(f"OpenClaw 400: {e}")
@@ -98,12 +125,12 @@ class OpenClaw(Agent):
 
         blob = self._parse_blob(msg)
         action = self._action_from_blob(blob)
-        action.reasoning = self._extract_reasoning(blob)
+        # GameAction.reasoning is set dynamically by the toolkit (same pattern
+        # as agents/agent.py:259, random_agent.py, multimodal.py).
+        action.reasoning = self._extract_reasoning(blob)  # type: ignore[attr-defined]
         return action
 
-    def _parse_action(
-        self, msg: Any, latest_frame: FrameData
-    ) -> GameAction:
+    def _parse_action(self, msg: Any, latest_frame: FrameData) -> GameAction:
         return self._action_from_blob(self._parse_blob(msg))
 
     _JSON_BLOB = re.compile(r"\{[^{}]*\"action\"[^{}]*\}", re.DOTALL)
@@ -173,7 +200,9 @@ class OpenClaw(Agent):
         # reasoning_tokens stays 0: OpenClaw v2026.5.7's normalizeUsage has
         # no reasoning slot. Read the real field here if OpenClaw forwards it.
         parsed = isinstance(blob, dict)
-        src = blob if parsed else {}
+        # Re-stating the isinstance on this line (instead of using `parsed`)
+        # lets mypy narrow `src` to dict[str, Any] for the .get() calls below.
+        src: dict[str, Any] = blob if isinstance(blob, dict) else {}
 
         thought_raw = src.get("thought")
         thought = str(thought_raw).strip() if thought_raw else ""
@@ -188,16 +217,20 @@ class OpenClaw(Agent):
 
         raw_alts = src.get("alternatives_considered")
         if isinstance(raw_alts, list):
-            alternatives = [str(a)[: cls._MAX_ALT_CHARS] for a in raw_alts[: cls._MAX_ALTS]]
+            alternatives = [
+                str(a)[: cls._MAX_ALT_CHARS] for a in raw_alts[: cls._MAX_ALTS]
+            ]
         else:
             alternatives = []
 
-        return cls._enforce_size({
-            "thought": thought,
-            "confidence": confidence,
-            "alternatives_considered": alternatives,
-            "reasoning_tokens": 0,
-        })
+        return cls._enforce_size(
+            {
+                "thought": thought,
+                "confidence": confidence,
+                "alternatives_considered": alternatives,
+                "reasoning_tokens": 0,
+            }
+        )
 
     @classmethod
     def _enforce_size(cls, payload: dict[str, Any]) -> dict[str, Any]:
@@ -235,8 +268,9 @@ class OpenClaw(Agent):
         )
 
     def _build_prompt(self, latest_frame: FrameData) -> str:
-        return textwrap.dedent(
-            """
+        return (
+            textwrap.dedent(
+                """
             You are playing an unfamiliar turn-based grid game. Reach state=WIN
             to win. Each turn provides the latest observed frame and the legal
             actions for that state.
@@ -292,13 +326,16 @@ class OpenClaw(Agent):
             # GRID (hex)
             {grid}
             """
-        ).strip().format(
-            game_id=latest_frame.game_id,
-            state=latest_frame.state.name,
-            levels=latest_frame.levels_completed,
-            win_levels=latest_frame.win_levels,
-            available=self._action_names(latest_frame.available_actions),
-            grid=self._render_grid(latest_frame.frame),
+            )
+            .strip()
+            .format(
+                game_id=latest_frame.game_id,
+                state=latest_frame.state.name,
+                levels=latest_frame.levels_completed,
+                win_levels=latest_frame.win_levels,
+                available=self._action_names(latest_frame.available_actions),
+                grid=self._render_grid(latest_frame.frame),
+            )
         )
 
     def _action_names(self, actions: Optional[list[Any]]) -> list[str]:
@@ -332,6 +369,8 @@ class OpenClaw(Agent):
             self.recorder.record(
                 {
                     "openclaw_model": self.model,
+                    "openclaw_model_override": self._model_override,
+                    "openclaw_session_key": self._session_key,
                     "openclaw_total_tokens": self.token_counter,
                 }
             )

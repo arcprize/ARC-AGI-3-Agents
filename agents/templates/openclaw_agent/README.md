@@ -91,6 +91,25 @@ uv sync
 uv run main.py --agent=openclaw --game=ls20
 ```
 
+### Selecting the underlying model
+
+By default the gateway uses whatever you set at
+`agents.defaults.model.primary` in `~/.openclaw/openclaw.json` during
+onboarding. To compare providers without editing that file, export
+`OPENCLAW_MODEL` before running — the agent forwards it as the documented
+`x-openclaw-model` header on each request:
+
+```bash
+OPENCLAW_MODEL=anthropic/claude-opus-4-7 uv run main.py --agent=openclaw --game=ls20
+OPENCLAW_MODEL=openai/gpt-5              uv run main.py --agent=openclaw --game=ls20
+```
+
+`OPENCLAW_AGENT` (default `openclaw/default`) selects the OpenClaw *agent
+slug* (which tools/prompts it uses); `OPENCLAW_MODEL` overrides the
+underlying *provider model* for that agent. The override is also folded
+into the agent's recorder subdirectory name so per-model traces don't
+collide.
+
 ## Notes
 
 - **Why not OpenAI-style `tools`?** OpenClaw's `/v1/chat/completions` endpoint
@@ -100,8 +119,13 @@ uv run main.py --agent=openclaw --game=ls20
   reply with one JSON object naming the action, and we parse it from
   `message.content`. Tolerant of stray markdown fences.
 - **Session memory.** Each game passes `x-openclaw-session-key:
-  arc:<card_id>:<game_id>`. OpenClaw uses this to retain conversation history
-  across the game's 80-action budget — the main edge over a stateless LLM call.
+  arc:<card_id>:<game_id>:<run-id>`. OpenClaw retains conversation history
+  across the game's 80-action budget under that key — the main edge over a
+  stateless LLM call. The `<run-id>` suffix is a random per-process value
+  (overridable with `OPENCLAW_RUN_ID=<name>`), so each fresh `uv run main.py`
+  starts with blank server-side memory while turns within one run still
+  share state. Old sessions accumulate server-side; periodically run
+  `openclaw sessions cleanup --enforce` to evict them.
 - **No new Python deps.** The existing `openai` SDK talks to OpenClaw's
   endpoint directly.
 - **Vision.** OpenClaw's compat API does not document image input, so the grid

@@ -186,9 +186,8 @@ class TestExtractReasoning:
 
     def test_thought_over_cap_truncated_to_fit(self) -> None:
         import json as _json
-        out = OpenClaw._extract_reasoning(
-            {"action": "ACTION1", "thought": "a" * 20000}
-        )
+
+        out = OpenClaw._extract_reasoning({"action": "ACTION1", "thought": "a" * 20000})
         # The full JSON payload (not just thought) must fit under the cap.
         size = len(_json.dumps(out, separators=(",", ":")).encode("utf-8"))
         assert size <= 16 * 1024
@@ -208,7 +207,9 @@ class TestParseActionWithReasoningBlob:
         assert action is GameAction.ACTION2
 
     def test_blob_with_alternatives_array_inside_prose(self) -> None:
-        text = 'Here you go: {"action":"ACTION3","alternatives_considered":["x","y","z"]}'
+        text = (
+            'Here you go: {"action":"ACTION3","alternatives_considered":["x","y","z"]}'
+        )
         action = _bare_agent()._parse_action(_Msg(text), None)  # type: ignore[arg-type]
         assert action is GameAction.ACTION3
 
