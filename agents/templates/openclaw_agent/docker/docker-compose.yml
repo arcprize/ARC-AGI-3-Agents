@@ -1,0 +1,98 @@
+# Runs the OpenClaw gateway in a container, bind-mounting your existing
+# ~/.openclaw config and workspace so the ARC agent's tokens, default model,
+# and skills carry over unchanged.
+#
+# Loopback-only — port 18789 is published on 127.0.0.1 only.
+# The ARC agent on the host hits http://127.0.0.1:18789/v1/chat/completions.
+
+services:
+  openclaw-gateway:
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    # Provider API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.)
+    # are loaded from .env via env_file and passed straight through to the
+    # container. Adding a new provider is just "drop the key in .env" — no
+    # compose edits needed. See https://docs.openclaw.ai/providers for which
+    # env var each provider reads.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HOME: /home/node
+      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      # Bonjour discovery is pointless inside a container and noisy in logs.
+      OPENCLAW_DISABLE_BONJOUR: "1"
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - ${OPENCLAW_HOST_CONFIG_DIR:-${HOME}/.openclaw}:/home/node/.openclaw
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    extra_hosts:
+      # Let bundled local-model providers (Ollama/LM Studio) reach the host.
+      - "host.docker.internal:host-gateway"
+    ports:
+      # 127.0.0.1: prefix forces loopback-only publication.
+      - "127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+    init: true
+    restart: unless-stopped
+    command:
+      # Four things going on here:
+      # 1. The bind-mounted openclaw.json has `agents.defaults.workspace` set
+      #    to a host absolute path (e.g. /Users/<you>/.openclaw/workspace).
+      #    That path doesn't exist in the container and OpenClaw tries to
+      #    mkdir it on first chat-completion, hitting EACCES. We copy the
+      #    config out, rewrite the path to the container-side mount point,
+      #    and point OPENCLAW_CONFIG_PATH at the copy. The host config is
+      #    left untouched.
+      # 2. `agents.defaults.models` is OpenClaw's strict allowlist for the
+      #    `x-openclaw-model` header — provider/* wildcards apply to the
+      #    `/model` picker only, NOT to API header validation (verified
+      #    against http-utils-3xCgv22F.js:47 + model-selection-shared-
+      #    DOxyWoaQ.js:480 in v2026.5.7: `allowAny = rawAllowlist.length
+      #    === 0`). Onboarding typically seeds it with sonnet+haiku, which
+      #    makes OPENCLAW_MODEL=openai/gpt-5 fail with 400. We strip it
+      #    so any provider/model the daemon has a credential for is
+      #    callable via the env var. Provider plugins themselves auto-load
+      #    from API keys in the container env — `plugins.entries` doesn't
+      #    need to list each provider for routing.
+      # 3. The OpenAI-compat `/v1/chat/completions` endpoint is opt-in
+      #    (`gateway.http.endpoints.chatCompletions.enabled`). Onboarding
+      #    doesn't enable it, and the ARC agent talks to this endpoint, so
+      #    we force-enable it here. Without this the gateway returns 404
+      #    for every request.
+      # 4. Inside the container we MUST bind to all interfaces. Docker
+      #    forwards host port traffic to the container's eth0, not its
+      #    loopback; the "127.0.0.1:" prefix on the port mapping below is
+      #    what keeps the gateway loopback-only from outside.
+      - sh
+      - -ec
+      - |
+        cp /home/node/.openclaw/openclaw.json /tmp/openclaw.json
+        node -e "
+          const fs = require('fs');
+          const c = JSON.parse(fs.readFileSync('/tmp/openclaw.json', 'utf8'));
+          c.agents = c.agents || {};
+          c.agents.defaults = c.agents.defaults || {};
+          c.agents.defaults.workspace = '/home/node/.openclaw/workspace';
+          delete c.agents.defaults.models;
+          c.gateway = c.gateway || {};
+          c.gateway.http = c.gateway.http || {};
+          c.gateway.http.endpoints = c.gateway.http.endpoints || {};
+          c.gateway.http.endpoints.chatCompletions = { ...(c.gateway.http.endpoints.chatCompletions || {}), enabled: true };
+          fs.writeFileSync('/tmp/openclaw.json', JSON.stringify(c, null, 2));
+        "
+        export OPENCLAW_CONFIG_PATH=/tmp/openclaw.json
+        exec node dist/index.js gateway --bind lan --port 18789
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:18789/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

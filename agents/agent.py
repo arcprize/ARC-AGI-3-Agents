@@ -132,11 +132,13 @@ class Agent(ABC):
 
     def do_action_request(self, action: GameAction) -> FrameData:
         data = action.action_data.model_dump()
-        raw = self.arc_env.step(
-            action,
-            data=data,
-            reasoning=data["reasoning"] if "reasoning" in data else {},
-        )
+        # Agents attach reasoning to the GameAction enum instance, not to
+        # action_data — read it from the enum so it actually reaches step().
+        # Some agents emit a bare string; wrap so the wrapper always sees a dict.
+        reasoning = getattr(action, "reasoning", None)
+        if reasoning is not None and not isinstance(reasoning, dict):
+            reasoning = {"text": str(reasoning)}
+        raw = self.arc_env.step(action, data=data, reasoning=reasoning)
         return self._convert_raw_frame_data(raw)
 
     def _convert_raw_frame_data(self, raw: FrameDataRaw | None) -> FrameData:
