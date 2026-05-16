@@ -33,7 +33,10 @@ publishes `127.0.0.1:18789`, and rewrites the workspace path inside the
 container so host-side OpenClaw onboarding works unchanged.
 
 ```bash
-# 1. install the OpenClaw CLI and onboard with your provider key (one-time)
+# 1. install the OpenClaw CLI and onboard with your provider key (one-time).
+# Use --auth-choice openai-api-key (+ --openai-api-key sk-proj-...) instead
+# if you plan to set OPENCLAW_USE_CODEX=1 in docker/.env; that toggle routes
+# openai/* requests through OpenClaw's Codex harness.
 npm install -g openclaw@latest
 openclaw onboard --non-interactive --accept-risk \
   --auth-choice anthropic-api-key --anthropic-api-key sk-ant-...
