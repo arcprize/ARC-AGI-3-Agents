@@ -733,12 +733,12 @@ class SolverAgent(Agent):
         import pathlib
         import re
         envs_dir = os.getenv("ENVIRONMENTS_DIR", "environment_files")
-        # Supported game_id formats: "ls20" or "ls20-9607627b"
-        match = re.fullmatch(r"(ls20)(?:-([0-9a-fA-F]+))?", self.game_id)
+        # Supported game_id formats: "ls20" or "ls20-9607627b" (lowercase hex)
+        match = re.fullmatch(r"(ls20)(?:-([0-9a-f]+))?", self.game_id)
         if match is None:
             raise ValueError(
                 f"Unsupported game_id format: {self.game_id!r}. "
-                "Expected 'ls20' or 'ls20-<hash>'."
+                "Expected 'ls20' or 'ls20-<lowercase hex hash>'."
             )
         game_prefix, game_hash, class_name = self._parse_game_id()
         game_file = self._resolve_game_file(envs_dir, game_prefix, game_hash)
