@@ -13,6 +13,7 @@ from .templates.multimodal import MultiModalLLM
 from .templates.openclaw_agent import OpenClaw
 from .templates.random_agent import Random
 from .templates.reasoning_agent import ReasoningAgent
+from .templates.simple_memory_carryover import SimpleMemoryCarryover
 from .templates.smolagents import SmolCodingAgent, SmolVisionAgent
 
 load_dotenv()
@@ -29,6 +30,7 @@ for rec in Recorder.list():
 
 # update the agent dictionary to include subclasses of LLM class
 AVAILABLE_AGENTS["reasoningagent"] = ReasoningAgent
+AVAILABLE_AGENTS["simple_memory_carryover"] = SimpleMemoryCarryover
 
 __all__ = [
     "Swarm",
@@ -42,6 +44,7 @@ __all__ = [
     "ReasoningLLM",
     "GuidedLLM",
     "ReasoningAgent",
+    "SimpleMemoryCarryover",
     "SmolCodingAgent",
     "SmolVisionAgent",
     "Agent",
