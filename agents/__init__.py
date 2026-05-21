@@ -10,6 +10,7 @@ from .templates.langgraph_random_agent import LangGraphRandom
 from .templates.langgraph_thinking import LangGraphThinking
 from .templates.llm_agents import LLM, FastLLM, GuidedLLM, ReasoningLLM
 from .templates.multimodal import MultiModalLLM
+from .templates.openclaw_agent import OpenClaw
 from .templates.random_agent import Random
 from .templates.reasoning_agent import ReasoningAgent
 from .templates.smolagents import SmolCodingAgent, SmolVisionAgent
@@ -50,4 +51,5 @@ __all__ = [
     "AVAILABLE_AGENTS",
     "MultiModalLLM",
     "SolverAgent",
+    "OpenClaw",
 ]
