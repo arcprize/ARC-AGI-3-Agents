@@ -12,6 +12,7 @@ from .templates.llm_agents import LLM, FastLLM, GuidedLLM, ReasoningLLM
 from .templates.multimodal import MultiModalLLM
 from .templates.openclaw_agent import OpenClaw
 from .templates.random_agent import Random
+from .templates.playback_agent import PlaybackAgent
 from .templates.reasoning_agent import ReasoningAgent
 from .templates.smolagents import SmolCodingAgent, SmolVisionAgent
 
@@ -33,6 +34,7 @@ AVAILABLE_AGENTS["reasoningagent"] = ReasoningAgent
 __all__ = [
     "Swarm",
     "Random",
+    "PlaybackAgent",
     "LangGraphFunc",
     "LangGraphTextOnly",
     "LangGraphThinking",
