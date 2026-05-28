@@ -16,6 +16,7 @@ from types import FrameType
 from typing import Optional
 
 import requests
+from arc_agi import Arcade, OperationMode
 
 from agents import AVAILABLE_AGENTS, Swarm
 from agents.tracing import initialize as init_agentops
@@ -114,28 +115,54 @@ def main() -> None:
         logger.error("An Agent must be specified")
         return
 
-    print(f"{ROOT_URL}/api/games")
+    arcade = Arcade()
+    op_mode = arcade.operation_mode
+    local_game_ids = sorted({e.game_id for e in arcade.get_environments()})
 
-    # Get the list of games from the API
-    full_games = []
-    try:
-        with requests.Session() as session:
-            session.headers.update(HEADERS)
-            r = session.get(f"{ROOT_URL}/api/games", timeout=10)
+    full_games: list[str] = []
 
-        if r.status_code == 200:
-            try:
-                full_games = [g["game_id"] for g in r.json()]
-            except (ValueError, KeyError) as e:
-                logger.error(f"Failed to parse games response: {e}")
-                logger.error(f"Response content: {r.text[:200]}")
-        else:
-            logger.error(
-                f"API request failed with status {r.status_code}: {r.text[:200]}"
-            )
+    if op_mode == OperationMode.OFFLINE:
+        full_games = list(local_game_ids)
+        logger.info(
+            "OPERATION_MODE=offline: using %s game(s) from ENVIRONMENTS_DIR=%s",
+            len(full_games),
+            arcade.environments_dir,
+        )
+    else:
+        print(f"{ROOT_URL}/api/games")
+        try:
+            with requests.Session() as session:
+                session.headers.update(HEADERS)
+                r = session.get(f"{ROOT_URL}/api/games", timeout=10)
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to connect to API server: {e}")
+            if r.status_code == 200:
+                try:
+                    full_games = [g["game_id"] for g in r.json()]
+                except (ValueError, KeyError) as e:
+                    logger.error(f"Failed to parse games response: {e}")
+                    logger.error(f"Response content: {r.text[:200]}")
+            else:
+                logger.error(
+                    f"API request failed with status {r.status_code}: {r.text[:200]}"
+                )
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to connect to API server: {e}")
+
+        if op_mode == OperationMode.NORMAL and local_game_ids:
+            seen = set(full_games)
+            added_local = 0
+            for gid in local_game_ids:
+                if gid not in seen:
+                    full_games.append(gid)
+                    seen.add(gid)
+                    added_local += 1
+            if added_local:
+                logger.info(
+                    "Added %s local-only game id(s) from ENVIRONMENTS_DIR=%s",
+                    added_local,
+                    arcade.environments_dir,
+                )
 
     # For playback agents, we can derive the game from the recording filename
     if not full_games and args.agent and args.agent.endswith(".recording.jsonl"):
@@ -164,7 +191,8 @@ def main() -> None:
             )
         else:
             logger.error(
-                "No games available to play. Check API connection or recording file."
+                "No games available to play. Check API connection, recording file, "
+                "or set OPERATION_MODE=offline with games under ENVIRONMENTS_DIR."
             )
         return
 
@@ -183,7 +211,8 @@ def main() -> None:
         args.agent,
         ROOT_URL,
         games,
-        tags=tags,  # Pass tags as keyword argument
+        tags=tags,
+        arcade=arcade,
     )
     agent_thread = threading.Thread(target=partial(run_agent, swarm))
     agent_thread.daemon = True  # die when the main thread dies
