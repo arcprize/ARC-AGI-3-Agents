@@ -1,9 +1,8 @@
-# Runs the OpenClaw gateway in a container, bind-mounting your existing
-# ~/.openclaw config and workspace so the ARC agent's tokens, default model,
-# and skills carry over unchanged.
-#
-# Loopback-only — port 18789 is published on 127.0.0.1 only.
-# The ARC agent on the host hits http://127.0.0.1:18789/v1/chat/completions.
+# Runs the OpenClaw gateway in a container. Config/workspace default to a
+# docker-managed volume (openclaw-config); the gateway self-provisions on first
+# boot. OPENCLAW_HOST_CONFIG_DIR=<host path> bind-mounts a host dir instead.
+# Loopback-only: 18789 publishes on 127.0.0.1; the ARC agent hits
+# http://127.0.0.1:18789/v1/chat/completions.
 
 services:
   openclaw-gateway:
@@ -24,7 +23,8 @@ services:
       OPENCLAW_DISABLE_BONJOUR: "1"
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
-      - ${OPENCLAW_HOST_CONFIG_DIR:-${HOME}/.openclaw}:/home/node/.openclaw
+      # Named volume by default; OPENCLAW_HOST_CONFIG_DIR=<path> bind-mounts instead.
+      - ${OPENCLAW_HOST_CONFIG_DIR:-openclaw-config}:/home/node/.openclaw
     cap_drop:
       - NET_RAW
       - NET_ADMIN
@@ -67,9 +67,40 @@ services:
       #    forwards host port traffic to the container's eth0, not its
       #    loopback; the "127.0.0.1:" prefix on the port mapping below is
       #    what keeps the gateway loopback-only from outside.
+      # 5. First boot self-provisions (no host install). With no openclaw.json,
+      #    onboard a provider from .env keys (OPENCLAW_USE_CODEX=1 => openai; else
+      #    first of ANTHROPIC/OPENAI/GEMINI_API_KEY). When the codex toggle is on,
+      #    drop any host @openclaw/codex so the image's version-matched bundled
+      #    codex loads (a newer host plugin fails: "Cannot find module
+      #    ...codex-mcp-projection"), then doctor --fix. Idempotent. $$VAR is
+      #    escaped so the container shell (not compose) expands it.
       - sh
       - -ec
       - |
+        if [ ! -f /home/node/.openclaw/openclaw.json ]; then
+          prov=""; key=""
+          if [ "$$OPENCLAW_USE_CODEX" = "1" ]; then prov=openai; key="$$OPENAI_API_KEY"
+          elif [ -n "$$ANTHROPIC_API_KEY" ]; then prov=anthropic; key="$$ANTHROPIC_API_KEY"
+          elif [ -n "$$OPENAI_API_KEY" ]; then prov=openai; key="$$OPENAI_API_KEY"
+          elif [ -n "$$GEMINI_API_KEY" ]; then prov=gemini; key="$$GEMINI_API_KEY"
+          fi
+          if [ -z "$$key" ]; then echo "[entrypoint] ERROR: set a provider key in docker/.env (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY)"; exit 1; fi
+          echo "[entrypoint] no openclaw.json; onboarding $$prov-api-key in-container..."
+          tok=""
+          if [ -n "$$OPENCLAW_GATEWAY_TOKEN" ]; then tok="--gateway-token $$OPENCLAW_GATEWAY_TOKEN"; fi
+          openclaw onboard --non-interactive --accept-risk \
+            --auth-choice "$$prov-api-key" --"$$prov-api-key" "$$key" \
+            --gateway-auth token $$tok --gateway-bind loopback --gateway-port 18789 \
+            --flow quickstart --skip-channels --skip-skills --skip-health
+        fi
+        if [ "$$OPENCLAW_USE_CODEX" = "1" ]; then
+          if [ -e /home/node/.openclaw/npm/node_modules/@openclaw/codex ]; then
+            echo "[entrypoint] dropping host @openclaw/codex; using image's bundled codex"
+            rm -rf /home/node/.openclaw/npm/node_modules/@openclaw/codex
+          fi
+          echo "[entrypoint] running openclaw doctor --fix..."
+          node openclaw.mjs doctor --fix
+        fi
         cp /home/node/.openclaw/openclaw.json /tmp/openclaw.json
         node -e "
           const fs = require('fs');
@@ -82,6 +113,23 @@ services:
           c.gateway.http = c.gateway.http || {};
           c.gateway.http.endpoints = c.gateway.http.endpoints || {};
           c.gateway.http.endpoints.chatCompletions = { ...(c.gateway.http.endpoints.chatCompletions || {}), enabled: true };
+          if (process.env.OPENCLAW_USE_CODEX === '1') {
+            // Just enable the bundled codex plugin. Per docs.openclaw.ai/
+            // plugins/codex-harness, the plugin auto-intercepts canonical
+            // openai/* model refs when enabled. We deliberately do NOT
+            // touch models.providers.openai: defining that object obliges
+            // us to also seed baseUrl and a non-empty models list (schema
+            // requirement), and the host config typically lacks an openai
+            // provider entry entirely. The codex plugin consumes
+            // OPENAI_API_KEY from the container env and uses the default
+            // https://api.openai.com/v1 endpoint.
+            c.plugins = c.plugins || {};
+            c.plugins.entries = c.plugins.entries || {};
+            c.plugins.entries.codex = { ...(c.plugins.entries.codex || {}), enabled: true };
+            if (Array.isArray(c.plugins.allow) && !c.plugins.allow.includes('codex')) {
+              c.plugins.allow.push('codex');
+            }
+          }
           fs.writeFileSync('/tmp/openclaw.json', JSON.stringify(c, null, 2));
         "
         export OPENCLAW_CONFIG_PATH=/tmp/openclaw.json
@@ -96,3 +144,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+volumes:
+  # Config/workspace store (default mount); `docker compose down -v` wipes it.
+  openclaw-config:

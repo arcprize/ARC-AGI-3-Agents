@@ -27,43 +27,45 @@ main.py --agent=openclaw --game=ls20
 
 ## Setup
 
-**Recommended: run the gateway via Docker Compose.** The compose file uses
-OpenClaw's published image, bind-mounts your host `~/.openclaw` config/workspace,
-publishes `127.0.0.1:18789`, and rewrites the workspace path inside the
-container so host-side OpenClaw onboarding works unchanged.
+**Run the gateway via Docker Compose — no host OpenClaw install needed.** The
+compose file pulls OpenClaw's published image, keeps config/workspace in a
+docker-managed volume, publishes `127.0.0.1:18789`, and **onboards your provider
+in-container on first boot**. You just drop a provider key in `.env`.
 
 ```bash
-# 1. install the OpenClaw CLI and onboard with your provider key (one-time)
-npm install -g openclaw@latest
-openclaw onboard --non-interactive --accept-risk \
-  --auth-choice anthropic-api-key --anthropic-api-key sk-ant-...
-openclaw config set gateway.http.endpoints.chatCompletions.enabled true
-openclaw config set agents.defaults.model.primary anthropic/claude-haiku-4-5
-
-# 2. start the gateway in a container
+# 1. configure the gateway
 cd agents/templates/openclaw_agent/docker
-cp .env.example .env  # then edit and set ANTHROPIC_API_KEY
+cp .env.example .env
+# edit docker/.env and set ONE provider key — the first present is onboarded:
+#   ANTHROPIC_API_KEY=sk-ant-...     (or OPENAI_API_KEY / GEMINI_API_KEY)
+# For the Codex harness instead: set OPENAI_API_KEY + OPENCLAW_USE_CODEX=1
+#   (see "Codex harness" below)
+
+# 2. start it — first boot onboards the provider inside the container
 docker compose up -d
+docker compose logs -f openclaw-gateway   # wait for "[gateway] ready", then Ctrl-C
 cd ../../../..
 
-# 3. wire the gateway token into the ARC .env (also has ARC_API_KEY)
+# 3. set up the ARC .env. OPENCLAW_GATEWAY_TOKEN ships as a shared local-dev
+#    default already matching docker/.env, so you only set ARC_API_KEY here.
 cp .env.example .env
-# edit .env and set OPENCLAW_GATEWAY_TOKEN to the value from:
-#   python3 -c "import json; print(json.load(open('$HOME/.openclaw/openclaw.json'))['gateway']['auth']['token'])"
+# edit .env and set ARC_API_KEY
 ```
 
-If you'd rather skip Docker, the gateway also runs natively
-(`openclaw gateway run --port 18789`).
+To reuse an existing host `~/.openclaw` (or onboard on the host yourself), set
+`OPENCLAW_HOST_CONFIG_DIR=$HOME/.openclaw` in `docker/.env` to bind-mount it
+instead of the managed volume. The gateway can also run natively without Docker
+(`npm install -g openclaw@latest && openclaw gateway run --port 18789`).
 
 ### Docker Gateway
 
-Prerequisites: Docker Compose v2, an OpenClaw-supported provider key, and an
-OpenClaw config created by the setup commands above.
+Prerequisites: Docker Compose v2 and a provider API key in `docker/.env`. The
+container onboards on first boot, so no pre-existing OpenClaw config is needed.
 
 ```bash
 cd agents/templates/openclaw_agent/docker
 cp .env.example .env
-# edit .env and set ANTHROPIC_API_KEY or OPENAI_API_KEY
+# edit .env and set ANTHROPIC_API_KEY (or OPENAI_API_KEY / GEMINI_API_KEY)
 docker compose up -d
 docker compose logs -f openclaw-gateway
 ```
@@ -83,6 +85,33 @@ Stop it with:
 ```bash
 docker compose down
 ```
+
+### Codex harness (`OPENCLAW_USE_CODEX=1`)
+
+Routes `openai/*` calls through OpenClaw's [Codex harness][codex-harness]
+(openai-only; auth via `OPENAI_API_KEY`). Fully container-managed — no host
+`openclaw`/`npm` install. Just set the two vars and start:
+
+```bash
+cd agents/templates/openclaw_agent/docker
+cp .env.example .env        # set OPENAI_API_KEY=sk-proj-... and OPENCLAW_USE_CODEX=1
+docker compose up -d
+```
+
+On first boot the entrypoint onboards the openai-api-key auth inside the
+container (using `OPENAI_API_KEY` and `OPENCLAW_GATEWAY_TOKEN` from `.env`),
+then loads the image's **bundled** codex plugin. Because that plugin ships in
+the image it's always on the same OpenClaw version as the runtime — avoiding the
+load failure a host-installed `@openclaw/codex` newer than the image would cause
+(`Cannot find module '…/plugin-sdk/…/codex-mcp-projection'`, after which codex
+silently drops out). The repo-root `.env` ships the same default gateway token,
+so just set `ARC_API_KEY` (step 3) and run:
+
+```bash
+OPENCLAW_MODEL=openai/gpt-5.5 uv run main.py --agent=openclaw --game=ls20
+```
+
+[codex-harness]: https://docs.openclaw.ai/plugins/codex-harness
 
 ## Run
 
