@@ -14,6 +14,7 @@ from .templates.openclaw_agent import OpenClaw
 from .templates.random_agent import Random
 from .templates.reasoning_agent import ReasoningAgent
 from .templates.smolagents import SmolCodingAgent, SmolVisionAgent
+from .templates.solver_agent import SolverAgent
 
 load_dotenv()
 
@@ -27,7 +28,7 @@ AVAILABLE_AGENTS: dict[str, Type[Agent]] = {
 for rec in Recorder.list():
     AVAILABLE_AGENTS[rec] = Playback
 
-# update the agent dictionary to include subclasses of LLM class
+# explicitly register agent aliases/overrides for subclasses not auto-discovered
 AVAILABLE_AGENTS["reasoningagent"] = ReasoningAgent
 
 __all__ = [
@@ -49,5 +50,6 @@ __all__ = [
     "Playback",
     "AVAILABLE_AGENTS",
     "MultiModalLLM",
+    "SolverAgent",
     "OpenClaw",
 ]
