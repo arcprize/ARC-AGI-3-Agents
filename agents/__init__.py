@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from .agent import Agent, Playback
 from .recorder import Recorder
 from .swarm import Swarm
+from .templates.claude_thinking_agent import ClaudeThinkingAgent
 from .templates.langgraph_functional_agent import LangGraphFunc, LangGraphTextOnly
 from .templates.langgraph_random_agent import LangGraphRandom
 from .templates.langgraph_thinking import LangGraphThinking
@@ -33,6 +34,7 @@ AVAILABLE_AGENTS["reasoningagent"] = ReasoningAgent
 __all__ = [
     "Swarm",
     "Random",
+    "ClaudeThinkingAgent",
     "LangGraphFunc",
     "LangGraphTextOnly",
     "LangGraphThinking",

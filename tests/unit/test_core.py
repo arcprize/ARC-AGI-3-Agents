@@ -1,12 +1,9 @@
 import pytest
 
-from agents.structs import (
-    ActionInput,
-    Card,
+from arcengine import (
     FrameData,
     GameAction,
     GameState,
-    Scorecard,
 )
 from agents.templates.langgraph_random_agent import LangGraphRandom
 from agents.templates.random_agent import Random

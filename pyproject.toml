@@ -5,6 +5,7 @@ description = "ARC-AGI-3-Agents"
 readme = "readme.md"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=0.79.0",
     "arc-agi>=0.9.1",
     "dotenv>=0.9.9",
     "langchain[openai]>=0.3.27",

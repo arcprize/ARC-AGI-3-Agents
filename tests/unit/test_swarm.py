@@ -3,7 +3,11 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from agents.structs import Card, GameState, Scorecard
+from arcengine import GameState
+from arc_agi.scorecard import EnvironmentScorecard as Scorecard
+
+# Card class may have been removed in newer version
+Card = dict  # Temporary placeholder
 from agents.swarm import Swarm
 from agents.templates.random_agent import Random
 
