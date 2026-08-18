@@ -66,13 +66,13 @@ R --> C
 3. Get an API key from the [ARC-AGI-3 Website](https://three.arcprize.org/) and set it as an environment variable in your .env file.
 
 ```bash
-export ARC_API_KEY="your_api_key_here"
+export ARC_API_KEY="KGAT_9403c244a51a06c4e57a2ce504923339"
 ```
 
 4. Run the random agent (generates random actions) against the ls20 game.
 
-```bash
-uv run main.py --agent=random --game=ls20
+```ps1
+uv run main.py --agent=random --game=ls20-9607627b
 ```
 ```mermaid
 graph TD
@@ -241,7 +241,7 @@ Voting->>Orchestrator: best solution
 1. Add your AgentOps API key to your `.env` file:
 
 ```bash
-AGENTOPS_API_KEY=aos_your_api_key_here
+AGENTOPS_API_KEY=aos_9403c244a51a06c4e57a2ce504923339
 ```
 
 2. The AgentOps integration is automatically initialized when you run an agent. The tracing decorator `@trace_agent_session` is already applied to agent execution methods in the codebase.
