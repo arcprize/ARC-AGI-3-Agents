@@ -17,6 +17,7 @@ cd ARC-AGI-3-Agents
 cp .env.example .env
 ```
 > # SWARM SRUCTURE
+
 ```mermaid
 graph TD
 
@@ -63,9 +64,10 @@ G --> C
 V --> R[Evaluation Metrics]
 R --> C
 ```
+
 3. Get an API key from the [ARC-AGI-3 Website](https://three.arcprize.org/) and set it as an environment variable in your .env file.
 
-```bash
+```env
 export ARC_API_KEY="KGAT_9403c244a51a06c4e57a2ce504923339"
 ```
 
@@ -74,6 +76,8 @@ export ARC_API_KEY="KGAT_9403c244a51a06c4e57a2ce504923339"
 ```ps1
 uv run main.py --agent=random --game=ls20-9607627b
 ```
+
+
 ```mermaid
 graph TD
 
@@ -148,10 +152,7 @@ For more information, see the [documentation](https://three.arcprize.org/docs#qu
                 ENVIRONMENT
 
 ```
-[Initial Release]
-
-[web4]
-
+[Initial Release][web4]
 ```mermaid
 graph TD
 
@@ -186,7 +187,7 @@ H --> B
 
 AgentOps is already included as an optional dependency in this project. To install it:
 
-```bash
+```ps1
 uv sync --extra agentops
 ```
 
@@ -317,10 +318,11 @@ We welcome contributions! To contribute to ARC-AGI-3-Agents, please follow these
 1.  Fork the repository and create a new branch for your feature or bugfix.
 2.  Make your changes and ensure that all tests pass, you are welcome to add more tests for your specific fixes.
 3.  This project uses `ruff` for linting and formatting. Please set up the pre-commit hooks to ensure your contributions match the project's style.
-    ```bash
-    pip install pre-commit
-    pre-commit install
-    ```
+
+```npm
+ pip install pre-commit
+ pre-commit install
+```
 4.  Write clear commit messages describing your changes.
 5.  Open a pull request with a description of your changes and the motivation behind them.
 
