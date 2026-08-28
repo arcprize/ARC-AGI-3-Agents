@@ -1,8 +1,8 @@
-# ARC-AGI-3-Agents
+> # ARC-AGI-3-Agents
 
-## Quickstart
+> ## Quickstart
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if not already installed.
+> Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if not already installed.
 
 1. Clone the ARC-AGI-3-Agents repo and enter the directory.
 
@@ -17,10 +17,16 @@ cd ARC-AGI-3-Agents
 cp .env-example .env
 ```
 
-3. Get an API key from the [ARC-AGI-3 website](https://three.arcprize.org/) and set it in `.env` (or export it):
+3. Get an API key from the
+4. >  [ARC-AGI-3 website](https://three.arcprize.org/) and set it in `.env` (or export it):
 
+```shell
+export ARC_API_KEY="KGAT_9403c244a51a06c4e57a2ce504923339"
+echo 'ARC_API_KEY=your-api-key-here' > .env
+```
+> ## agentops
 ```bash
-export ARC_API_KEY="your_api_key_here"
+export KAGGLE_API_TOKEN=KGAT_9403c244a51a06c4e57a2ce504923339
 ```
 
 4. Run the random agent against the locksmith game:
@@ -33,51 +39,54 @@ For more details see the full docs at <https://three.arcprize.org/docs>.
 
 ---
 
-## Observability (Optional)
+> ## Observability (Optional)
 
 [AgentOps](https://agentops.ai/) provides real-time monitoring and debugging.
 
 ```bash
 # Install the optional extra
-uv sync --agentops
+uv sync --extra agentops
+
+pip install ruff pre-commit
+pre-commit install
 
 # Or with pip
 pip install -U agentops
 ```
 
-Add your key to `.env`:
+> Add your key to `.env`:
 
-```bash
-AGENTOPS_API_KEY=aos_your_api_key_here
+```env
+AGENTOPS_API_KEY="b51954a5-c92d-4055-a796-2a3ef528700e"
 ```
 
 Run an agent and you’ll get a session replay link in the console.
 
 ---
 
-## Contest Submission
+> ## Contest Submission
 
 Submit your agent via this form: <https://forms.gle/wMLZrEFGDh33DhzV9>
 
 ---
 
-## Contributing
+> ## Contributing
 
 1. Fork the repo & create a branch.
 2. Make changes and ensure tests pass.
 3. Set up `ruff` pre-commit hooks for linting & formatting:
 
-   ```bash
+```bash
    pip install pre-commit
    pre-commit install
-   ```
+```
 4. Commit with clear messages and open a PR.
 
 Feel free to open an issue if you need help.
 
 ---
 
-## Tests
+> ## Tests
 
 Run the Python test-suite with `pytest`:
 
@@ -89,7 +98,7 @@ See <https://three.arcprize.org/docs#testing> for more info.
 
 ---
 
-## Agent System
+> ## Agent System
 
 The core agent framework lives in [`agents/`](https://github.com/arcprize/ARC-AGI-3-Agents/tree/main/agents). It contains:
 
@@ -98,9 +107,9 @@ The core agent framework lives in [`agents/`](https://github.com/arcprize/ARC-AG
 - `recorder.py` – JSONL gameplay recording utilities.
 - `structs.py` – typed data structures (`FrameData`, `GameAction`, etc.).
 
-See the concise README in that folder or jump straight to the online docs → [Agent Quick-Start](https://three.arcprize.org/docs#agent-quickstart).
+See the concise README in that folder or jump straight to the online docs → > [Agent Quick-Start](https://three.arcprize.org/docs#agent-quickstart).
 
-## Agent Templates
+> ## Agent Templates
 
 Ready-made templates live in [`agents/templates/`](https://github.com/arcprize/ARC-AGI-3-Agents/tree/main/agents/templates):
 
@@ -109,7 +118,7 @@ Ready-made templates live in [`agents/templates/`](https://github.com/arcprize/A
 
 Browse them on GitHub or read the docs:
 - Standard templates: <https://three.arcprize.org/docs#building-agents>
-- Third-party templates: <https://three.arcprize.org/docs#third-party-templates>
+> - Third-party templates: <https://three.arcprize.org/docs#third-party-templates>
 
 ---
 

@@ -1,0 +1,50 @@
+.lmlm-search {
+    margin-bottom: 15px;
+}
+
+.lmlm-search-input {
+    width: 100%;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color-primary);
+    background: var(--background-fill-primary);
+    color: var(--body-text-color);
+}
+
+.lmlm-suggestions {
+    margin-bottom: 18px;
+}
+
+.suggestion-title {
+    font-size: 12px;
+    opacity: 0.7;
+    margin-bottom: 8px;
+    padding-left: 5px;
+}
+
+.suggestion-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.suggestion-chip {
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: var(--background-fill-primary);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-left: auto;
+    background: #666;
+}
+
+.status-dot.active {
+    background: #00ff88;
+    box-shadow: 0 0 8px #00ff88;
+}

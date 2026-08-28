@@ -5,12 +5,12 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-import requests
+from arc_agi import EnvironmentWrapper
+from arc_agi.scorecard import EnvironmentScorecard
+from arcengine import FrameData, FrameDataRaw, GameAction, GameState
 from pydantic import ValidationError
-from requests import Response
 
 from .recorder import Recorder
-from .structs import FrameData, GameAction, GameState, Scorecard
 from .tracing import trace_agent_session
 
 logger = logging.getLogger()
@@ -33,7 +33,7 @@ class Agent(ABC):
 
     recorder: Recorder
     headers: dict[str, str]
-    _session: requests.Session
+    arc_env: EnvironmentWrapper
 
     # AgentOps tracing attributes
     trace: Any = None
@@ -46,6 +46,7 @@ class Agent(ABC):
         agent_name: str,
         ROOT_URL: str,
         record: bool,
+        arc_env: EnvironmentWrapper,
         tags: Optional[list[str]] = None,
     ) -> None:
         self.ROOT_URL = ROOT_URL
@@ -54,7 +55,7 @@ class Agent(ABC):
         self.guid = ""
         self.agent_name = agent_name
         self.tags = tags or []
-        self.frames = [FrameData(score=0)]
+        self.frames = [FrameData(levels_completed=0)]
         self._cleanup = True
         if record:
             self.start_recording()
@@ -62,9 +63,7 @@ class Agent(ABC):
             "X-API-Key": os.getenv("ARC_API_KEY", ""),
             "Accept": "application/json",
         }
-        # Reuse session
-        self._session = requests.Session()
-        self._session.headers.update(self.headers)
+        self.arc_env = arc_env
 
     @trace_agent_session
     def main(self) -> None:
@@ -74,11 +73,16 @@ class Agent(ABC):
             not self.is_done(self.frames, self.frames[-1])
             and self.action_counter <= self.MAX_ACTIONS
         ):
-            action = self.choose_action(self.frames, self.frames[-1])
+            action = self.choose_action(
+                self.frames,
+                self._convert_raw_frame_data(
+                    self.arc_env.observation_space if self.arc_env else None
+                ),
+            )
             if frame := self.take_action(action):
                 self.append_frame(frame)
                 logger.info(
-                    f"{self.game_id} - {action.name}: count {self.action_counter}, score {frame.score}, avg fps {self.fps})"
+                    f"{self.game_id} - {action.name}: count {self.action_counter}, levels completed {frame.levels_completed}, avg fps {self.fps})"
                 )
             self.action_counter += 1
 
@@ -89,8 +93,8 @@ class Agent(ABC):
         return self.frames[-1].state
 
     @property
-    def score(self) -> int:
-        return self.frames[-1].score
+    def levels_completed(self) -> int:
+        return self.frames[-1].levels_completed  # type: ignore[no-any-return]
 
     @property
     def seconds(self) -> float:
@@ -126,30 +130,33 @@ class Agent(ABC):
         if hasattr(self, "recorder") and not self.is_playback:
             self.recorder.record(json.loads(frame.model_dump_json()))
 
-    def do_action_request(self, action: GameAction) -> Response:
+    def do_action_request(self, action: GameAction) -> FrameData:
         data = action.action_data.model_dump()
-        if action == GameAction.RESET:
-            data["card_id"] = self.card_id
-        if self.guid:
-            data["guid"] = self.guid
-        if action.reasoning:
-            data["reasoning"] = action.reasoning
-        if self.game_id:
-            data["game_id"] = self.game_id
-
-        json_str = json.dumps(data)
-        r = self._session.post(
-            f"{self.ROOT_URL}/api/cmd/{action.name}",
-            json=json.loads(json_str),
-            headers=self.headers,
+        raw = self.arc_env.step(
+            action,
+            data=data,
+            reasoning=data["reasoning"] if "reasoning" in data else {},
         )
-        if "error" in r.json():
-            logger.warning(f"Exception during action request: {r.json()}")
-        return r
+        return self._convert_raw_frame_data(raw)
+
+    def _convert_raw_frame_data(self, raw: FrameDataRaw | None) -> FrameData:
+        if raw is None:
+            raise ValueError("Received None frame data from environment")
+        out = FrameData(
+            game_id=raw.game_id,
+            frame=[arr.tolist() for arr in raw.frame],
+            state=raw.state,
+            levels_completed=raw.levels_completed,
+            win_levels=raw.win_levels,
+            guid=raw.guid,
+            full_reset=raw.full_reset,
+            available_actions=raw.available_actions,
+        )
+        return out
 
     def take_action(self, action: GameAction) -> Optional[FrameData]:
         """Submits the specific action and gets the next frame."""
-        frame_data = self.do_action_request(action).json()
+        frame_data = self.do_action_request(action)
         try:
             frame = FrameData.model_validate(frame_data)
         except ValidationError as e:
@@ -157,28 +164,13 @@ class Agent(ABC):
             return None
         return frame
 
-    def get_scorecard(self) -> Scorecard:
-        """Get the scorecard for this agent's game as a Scorecard pydantic object."""
-        r = self._session.get(
-            f"{self.ROOT_URL}/api/scorecard/{self.card_id}/{self.game_id}",
-            timeout=1,
-            headers=self.headers,
-        )
-        response_data = r.json()
-        if "error" in response_data:
-            logger.warning(f"Exception during scorecard request: {response_data}")
-        return Scorecard.model_validate(response_data)
-
-    def cleanup(self, scorecard: Optional[Scorecard] = None) -> None:
+    def cleanup(self, scorecard: Optional[EnvironmentScorecard] = None) -> None:
         """Called after main loop is finished."""
         if self._cleanup:
             self._cleanup = False  # only cleanup once per agent
             if hasattr(self, "recorder") and not self.is_playback:
                 if scorecard:
                     self.recorder.record(scorecard.get(self.game_id))
-                else:
-                    scorecard_obj = self.get_scorecard()
-                    self.recorder.record(scorecard_obj.get(self.game_id))
                 logger.info(
                     f"recording for {self.name} is available in {self.recorder.filename}"
                 )
@@ -190,8 +182,6 @@ class Agent(ABC):
                 logger.info(
                     f"Finishing: agent took {self.action_counter} actions, took {self.seconds} seconds ({self.fps} average fps)"
                 )
-            if hasattr(self, "_session"):
-                self._session.close()
 
     @abstractmethod
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:

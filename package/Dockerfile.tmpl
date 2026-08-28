@@ -1,0 +1,178 @@
+{{ if eq .Accelerator "gpu" }}
+FROM us-docker.pkg.dev/colab-images/public/runtime:release-colab-external-images_20260416-060047_RC00
+{{ else }}
+FROM us-docker.pkg.dev/colab-images/public/cpu-runtime:release-colab-external-images_20260416-060047_RC00
+{{ end}}
+
+ADD kaggle_requirements.txt /kaggle_requirements.txt
+
+# Freeze existing requirements from base image for critical packages:
+RUN pip freeze | grep -E 'tensorflow|keras|torch|jax' > /colab_requirements.txt
+
+# Merge requirements files:
+RUN cat /colab_requirements.txt >> /requirements.txt
+RUN cat /kaggle_requirements.txt >> /requirements.txt
+
+# Install Kaggle packages
+RUN uv pip install --system --no-cache -r /requirements.txt
+
+# Install manual packages:
+# b/183041606#comment5: the Kaggle data proxy doesn't support these APIs. If the library is missing, it falls back to using a regular BigQuery query to fetch data.
+RUN uv pip uninstall --system --no-cache google-cloud-bigquery-storage
+
+# uv cannot install this in requirements.txt without --no-build-isolation
+# to avoid affecting the larger build, we'll post-install it.
+RUN uv pip install --no-build-isolation --no-cache --system "git+https://github.com/Kaggle/learntools"
+
+# b/404590350: Ray and torchtune have conflicting cli named `tune`. `ray` is not part of Colab's base image. Re-install `tune` to ensure the torchtune CLI is available by default.
+# b/468367647: Unpin protobuf, version greater than v5.29.5 causes issues with numerous packages
+RUN uv pip install --system --force-reinstall --no-cache --no-deps torchtune
+RUN uv pip install --system --force-reinstall --no-cache "protobuf==5.29.5"
+# b/493600019: Colab base image ships numba that does not support NumPy 2.4; upgrade to latest.
+RUN uv pip install --system --force-reinstall --no-cache numba
+
+# Adding non-package dependencies:
+ADD clean-layer.sh  /tmp/clean-layer.sh
+ADD patches/nbconvert-extensions.tpl /opt/kaggle/nbconvert-extensions.tpl
+ADD patches/template_conf.json /opt/kaggle/conf.json
+
+ARG PACKAGE_PATH=/usr/local/lib/python3.12/dist-packages
+
+# Install GPU-specific non-pip packages.
+{{ if eq .Accelerator "gpu" }}
+# b/493600019: numba-cuda v0.30.0 fixes np.trapz removal in NumPy 2.4 but requires libcudart.so (GPU only).
+RUN uv pip install --system --force-reinstall --no-cache numba-cuda
+RUN uv pip install --system --no-cache "pycuda"
+{{ else }}
+# b/493600019: On CPU, remove numba-cuda shipped by the Colab base image. Newer numba-cuda
+# depends on cuda-bindings which crashes at import without libcudart.so. Packages like
+# tsfresh/stumpy that import numba.cuda will fall back gracefully without it.
+RUN uv pip uninstall --system numba-cuda 2>/dev/null || true
+{{ end }}
+
+
+# Use a fixed apt-get repo to stop intermittent failures due to flaky httpredir connections,
+# as described by Lionel Chan at http://stackoverflow.com/a/37426929/5881346
+RUN sed -i "s/httpredir.debian.org/debian.uchicago.edu/" /etc/apt/sources.list && \
+    apt-get update --allow-releaseinfo-change && \
+    # Needed by lightGBM (GPU build)
+    # https://lightgbm.readthedocs.io/en/latest/GPU-Tutorial.html#build-lightgbm
+    apt-get install -y build-essential unzip cmake libboost-dev libboost-system-dev libboost-filesystem-dev p7zip-full && \
+    # b/182601974: ssh client was removed from the base image but is required for packages such as stable-baselines.
+    apt-get install -y openssh-client && \
+    apt-get install -y graphviz && pip install graphviz && \
+    /tmp/clean-layer.sh
+
+ADD patches/keras_internal.py \
+    patches/keras_internal_test.py \
+    $PACKAGE_PATH/tensorflow_decision_forests/keras/
+
+RUN apt-get install -y libfreetype6-dev && \
+    apt-get install -y libglib2.0-0 libxext6 libsm6 libxrender1 libfontconfig1 --fix-missing && \
+    /tmp/clean-layer.sh
+
+RUN mkdir -p /usr/share/nltk_data && \
+    # NLTK Downloader no longer continues smoothly after an error, so we explicitly list
+    # the corpuses that work
+    python -m nltk.downloader -d /usr/share/nltk_data abc alpino averaged_perceptron_tagger \
+    basque_grammars biocreative_ppi bllip_wsj_no_aux \
+    book_grammars brown brown_tei cess_cat cess_esp chat80 city_database cmudict \
+    comtrans conll2000 conll2002 conll2007 crubadan dependency_treebank \
+    europarl_raw floresta gazetteers genesis gutenberg \
+    ieer inaugural indian jeita kimmo knbc large_grammars lin_thesaurus mac_morpho machado \
+    masc_tagged maxent_ne_chunker maxent_treebank_pos_tagger moses_sample movie_reviews \
+    mte_teip5 names nps_chat omw opinion_lexicon paradigms \
+    pil pl196x porter_test ppattach problem_reports product_reviews_1 product_reviews_2 propbank \
+    pros_cons ptb punkt punkt_tab qc reuters rslp rte sample_grammars semcor senseval sentence_polarity \
+    sentiwordnet shakespeare sinica_treebank smultron snowball_data spanish_grammars \
+    state_union stopwords subjectivity swadesh switchboard tagsets timit toolbox treebank \
+    twitter_samples udhr2 udhr unicode_samples universal_tagset universal_treebanks_v20 \
+    vader_lexicon verbnet webtext word2vec_sample wordnet wordnet_ic words ycoe
+
+RUN apt-get install -y git-lfs && \
+    # vtk dependencies
+    apt-get install -y libgl1-mesa-glx && \
+    # xvfbwrapper dependencies
+    apt-get install -y xvfb && \
+    /tmp/clean-layer.sh
+
+# Download base easyocr models.
+# https://github.com/JaidedAI/EasyOCR#usage
+RUN mkdir -p /root/.EasyOCR/model && \
+    wget --no-verbose "https://github.com/JaidedAI/EasyOCR/releases/download/v1.3/latin_g2.zip" -O /root/.EasyOCR/model/latin.zip && \
+    unzip /root/.EasyOCR/model/latin.zip -d /root/.EasyOCR/model/ && \
+    rm /root/.EasyOCR/model/latin.zip && \
+    wget --no-verbose "https://github.com/JaidedAI/EasyOCR/releases/download/v1.3/english_g2.zip" -O /root/.EasyOCR/model/english.zip && \
+    unzip /root/.EasyOCR/model/english.zip -d /root/.EasyOCR/model/ && \
+    rm /root/.EasyOCR/model/english.zip && \
+    wget --no-verbose "https://github.com/JaidedAI/EasyOCR/releases/download/pre-v1.1.6/craft_mlt_25k.zip" -O /root/.EasyOCR/model/craft_mlt_25k.zip && \
+    unzip /root/.EasyOCR/model/craft_mlt_25k.zip -d /root/.EasyOCR/model/ && \
+    rm /root/.EasyOCR/model/craft_mlt_25k.zip && \
+    /tmp/clean-layer.sh
+
+# Tesseract and some associated utility packages
+RUN apt-get install tesseract-ocr -y && \
+    /tmp/clean-layer.sh
+
+ENV TESSERACT_PATH=/usr/bin/tesseract \
+    # For Facets, we also include an empty path to include $PWD.
+    PYTHONPATH=:$PYTHONPATH:/opt/facets/facets_overview/python/ \
+    # For Theano with MKL
+    MKL_THREADING_LAYER=GNU
+
+# Temporary fixes and patches
+# Stop jupyter nbconvert trying to rewrite its folder hierarchy
+RUN mkdir -p /root/.jupyter && touch /root/.jupyter/jupyter_nbconvert_config.py && touch /root/.jupyter/migrated && \
+    mkdir -p /.jupyter && touch /.jupyter/jupyter_nbconvert_config.py && touch /.jupyter/migrated && \
+    # Make matplotlib output in Jupyter notebooks display correctly
+    mkdir -p /etc/ipython/ && echo "c = get_config(); c.IPKernelApp.matplotlib = 'inline'" > /etc/ipython/ipython_config.py && \
+    /tmp/clean-layer.sh
+
+# install imagemagick for wand
+# https://docs.wand-py.org/en/latest/guide/install.html#install-imagemagick-on-debian-ubuntu
+RUN apt-get install libmagickwand-dev && \
+    /tmp/clean-layer.sh
+
+# Override default imagemagick policies
+ADD patches/imagemagick-policy.xml /etc/ImageMagick-6/policy.xml
+
+# Add Kaggle module resolver
+ADD patches/kaggle_module_resolver.py $PACKAGE_PATH/tensorflow_hub/kaggle_module_resolver.py
+RUN sed -i '/from tensorflow_hub import uncompressed_module_resolver/a from tensorflow_hub import kaggle_module_resolver' $PACKAGE_PATH/tensorflow_hub/config.py && \
+    sed -i '/_install_default_resolvers()/a \ \ registry.resolver.add_implementation(kaggle_module_resolver.KaggleFileResolver())' $PACKAGE_PATH/tensorflow_hub/config.py
+
+# Add BigQuery client proxy settings
+ENV PYTHONUSERBASE="/root/.local"
+ADD patches/kaggle_gcp.py \
+    patches/kaggle_secrets.py \
+    patches/kaggle_session.py \
+    patches/kaggle_web_client.py \
+    patches/kaggle_datasets.py \
+    $PACKAGE_PATH/
+
+# Figure out why this is in a different place?
+# Found by doing a export PYTHONVERBOSE=1 and then running python and checking for where it looked for it.
+ADD patches/sitecustomize.py /usr/lib/python3.12/sitecustomize.py
+
+ARG GIT_COMMIT=unknown \
+    BUILD_DATE=unknown
+
+LABEL git-commit=$GIT_COMMIT \
+    build-date=$BUILD_DATE
+
+ENV GIT_COMMIT=${GIT_COMMIT} \
+    BUILD_DATE=${BUILD_DATE}
+
+# Correlate current release with the git hash inside the kernel editor by running `!cat /etc/git_commit`.
+RUN echo "$GIT_COMMIT" > /etc/git_commit && echo "$BUILD_DATE" > /etc/build_date
+
+{{ if eq .Accelerator "gpu" }}
+# Add the CUDA home and ensure NVIDIA driver libs (mounted by the NVIDIA Container
+# Toolkit at runtime into /usr/local/nvidia/lib64) are on the library path.
+ENV CUDA_HOME=/usr/local/cuda \
+    LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+# Register the NVIDIA driver lib path with the dynamic linker so libraries can
+# be found even without LD_LIBRARY_PATH being set.
+RUN echo '/usr/local/nvidia/lib64' > /etc/ld.so.conf.d/nvidia-driver.conf && ldconfig 2>/dev/null || true
+{{ end }}
+ENTRYPOINT ["/usr/bin/env"]

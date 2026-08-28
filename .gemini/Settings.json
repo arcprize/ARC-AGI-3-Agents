@@ -1,0 +1,11 @@
+# Run this command:
+gemini mcp add --transport http kaggle https://www.kaggle.com/mcp
+
+# Or add this to your ~/.gemini/settings.json file:
+{
+    "mcpServers": {
+        "kaggle": {
+            "httpUrl": "https://www.kaggle.com/mcp"
+        }
+    }
+}

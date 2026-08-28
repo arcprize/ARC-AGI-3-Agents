@@ -5,10 +5,10 @@ import textwrap
 from typing import Any, Optional
 
 import openai
+from arcengine import FrameData, GameAction, GameState
 from openai import OpenAI as OpenAIClient
 
 from ..agent import Agent
-from ..structs import FrameData, GameAction, GameState
 
 logger = logging.getLogger()
 
@@ -36,7 +36,8 @@ class LLM(Agent):
     @property
     def name(self) -> str:
         obs = "with-observe" if self.DO_OBSERVATION else "no-observe"
-        name = f"{super().name}.{self.MODEL}.{obs}"
+        sanitized_model_name = self.MODEL.replace("/", "-").replace(":", "-")
+        name = f"{super().name}.{sanitized_model_name}.{obs}"
         if self.REASONING_EFFORT:
             name += f".{self.REASONING_EFFORT}"
         return name
@@ -273,22 +274,22 @@ class LLM(Agent):
             },
             {
                 "name": GameAction.ACTION1.name,
-                "description": "Send this simple input action (1, A, Left).",
+                "description": "Send this simple input action (1, W, Up).",
                 "parameters": empty_params,
             },
             {
                 "name": GameAction.ACTION2.name,
-                "description": "Send this simple input action (2, D, Right).",
+                "description": "Send this simple input action (2, S, Down).",
                 "parameters": empty_params,
             },
             {
                 "name": GameAction.ACTION3.name,
-                "description": "Send this simple input action (3, W, Up).",
+                "description": "Send this simple input action (3, A, Left).",
                 "parameters": empty_params,
             },
             {
                 "name": GameAction.ACTION4.name,
-                "description": "Send this simple input action (4, S, Down).",
+                "description": "Send this simple input action (4, D, Right).",
                 "parameters": empty_params,
             },
             {
@@ -352,7 +353,7 @@ class LLM(Agent):
 Reply with a few sentences of plain-text strategy observation about the frame to inform your next action.
         """.format(
                 latest_frame=self.pretty_print_3d(latest_frame.frame),
-                score=latest_frame.score,
+                score=latest_frame.levels_completed,
                 state=latest_frame.state.name,
             )
         )
@@ -427,7 +428,7 @@ class ReasoningLLM(LLM, Agent):
             "reasoning_tokens": self._last_reasoning_tokens,
             "total_reasoning_tokens": self._total_reasoning_tokens,
             "game_context": {
-                "score": latest_frame.score,
+                "score": latest_frame.levels_completed,
                 "state": latest_frame.state.name,
                 "action_counter": self.action_counter,
                 "frame_count": len(frames),
@@ -523,7 +524,7 @@ class GuidedLLM(LLM, Agent):
             "reasoning_tokens": self._last_reasoning_tokens,
             "total_reasoning_tokens": self._total_reasoning_tokens,
             "game_context": {
-                "score": latest_frame.score,
+                "score": latest_frame.levels_completed,
                 "state": latest_frame.state.name,
                 "action_counter": self.action_counter,
                 "frame_count": len(frames),
@@ -577,7 +578,7 @@ Grids. Each Grid is a matrix size INT<0,63> by INT<0,63> filled with
 INT<0,15> values.
 
 You are playing a game called LockSmith. Rules and strategy:
-* RESET: start over, ACTION1: move left, ACTION2: move right, ACTION3: move up, ACTION4: move down (ACTION5 and ACTION6 do nothing in this game)
+* RESET: start over, ACTION1: move up, ACTION2: move down, ACTION3: move left, ACTION4: move right (ACTION5 and ACTION6 do nothing in this game)
 * you may may one action per turn
 * your goal is find and collect a matching key then touch the exit door
 * 6 levels total, score shows which level, complete all levels to win (grid row 62)

@@ -3,6 +3,7 @@ import textwrap
 import time
 from typing import Any
 
+from arcengine import FrameData, GameAction, GameState
 from PIL import Image
 from smolagents import (
     AgentImage,
@@ -13,7 +14,6 @@ from smolagents import (
     tool,
 )
 
-from agents.structs import FrameData, GameAction, GameState
 from agents.templates.llm_agents import LLM
 
 from ..agent import Agent

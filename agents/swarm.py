@@ -6,9 +6,8 @@ import os
 from threading import Thread
 from typing import TYPE_CHECKING, Optional, Type
 
-import requests
-
-from .structs import Scorecard
+from arc_agi import Arcade, OperationMode
+from arc_agi.scorecard import EnvironmentScorecard
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -30,7 +29,7 @@ class Swarm:
     cleanup_threads: list[Thread]
     headers: dict[str, str]
     card_id: Optional[str]
-    _session: requests.Session
+    _arc: Arcade
 
     def __init__(
         self,
@@ -52,9 +51,8 @@ class Swarm:
             "X-API-Key": os.getenv("ARC_API_KEY", ""),
             "Accept": "application/json",
         }
-        self._session = requests.Session()
-        self._session.headers.update(self.headers)
-        self.tags = tags.copy() if tags else []
+        self.tags = tags.copy() if tags is not None else []
+        self._arc = Arcade()
 
         # Set up base tags for tracing
         if self.agent_name.endswith(".recording.jsonl"):
@@ -66,12 +64,14 @@ class Swarm:
         else:
             self.tags.extend(["agent", self.agent_name])
 
-    def main(self) -> Scorecard:
+    def main(self) -> EnvironmentScorecard | None:
         """The main orchestration loop, continues until all agents are done."""
 
         # submit start of scorecard
+        print("***** MAKING SCORECARD")
         self.card_id = self.open_scorecard()
 
+        print(f"***** MAKING ALL AGENTS with card id: {self.card_id}")
         # create all the agents
         for i in range(len(self.GAMES)):
             g = self.GAMES[i % len(self.GAMES)]
@@ -81,6 +81,7 @@ class Swarm:
                 agent_name=self.agent_name,
                 ROOT_URL=self.ROOT_URL,
                 record=True,
+                arc_env=self._arc.make(g, scorecard_id=self.card_id),
                 tags=self.tags,
             )
             self.agents.append(a)
@@ -98,45 +99,35 @@ class Swarm:
             t.join()
 
         # all agents are now done
-        card_id_for_url = self.card_id
-        scorecard = self.close_scorecard(self.card_id)
-        logger.info("--- FINAL SCORECARD REPORT ---")
-        logger.info(json.dumps(scorecard.model_dump(), indent=2))
+        card_id = self.card_id
+        scorecard = self.close_scorecard(card_id)
+        if scorecard:
+            logger.info("--- FINAL SCORECARD REPORT ---")
+            logger.info(json.dumps(scorecard.model_dump(), indent=2))
 
         # Provide web link to scorecard
-        if card_id_for_url:
-            scorecard_url = f"{self.ROOT_URL}/scorecards/{card_id_for_url}"
-            logger.info(f"View your scorecard online: {scorecard_url}")
+        if card_id:
+            if self._arc.operation_mode == OperationMode.ONLINE:
+                scorecard_url = f"{self.ROOT_URL}/scorecards/{card_id}"
+                logger.info(f"View your scorecard online: {scorecard_url}")
+            else:
+                logger.info(
+                    "Online scorecard is not available, to use the online API set the ONLINE_ONLY envvar to True"
+                )
 
         self.cleanup(scorecard)
 
         return scorecard
 
     def open_scorecard(self) -> str:
-        json_str = json.dumps({"tags": self.tags})
+        return self._arc.open_scorecard(tags=self.tags)  # type: ignore[no-any-return]
 
-        r = self._session.post(
-            f"{self.ROOT_URL}/api/scorecard/open",
-            json=json.loads(json_str),
-            headers=self.headers,
-        )
-        if "error" in r.json():
-            logger.warning(f"Exception during open scorecard: {r.json()}")
-        return str(r.json()["card_id"])
-
-    def close_scorecard(self, card_id: str) -> Scorecard:
+    def close_scorecard(self, card_id: str) -> Optional[EnvironmentScorecard]:
         self.card_id = None
-        json_str = json.dumps({"card_id": card_id})
-        r = self._session.post(
-            f"{self.ROOT_URL}/api/scorecard/close",
-            json=json.loads(json_str),
-            headers=self.headers,
-        )
-        if "error" in r.json():
-            logger.warning(f"Exception during open scorecard: {r.json()}")
-        return Scorecard.model_validate(r.json())
 
-    def cleanup(self, scorecard: Optional[Scorecard] = None) -> None:
+        return self._arc.close_scorecard(card_id)
+
+    def cleanup(self, scorecard: Optional[EnvironmentScorecard] = None) -> None:
         """Cleanup all agents."""
         for a in self.agents:
             a.cleanup(scorecard)

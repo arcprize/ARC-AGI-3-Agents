@@ -1,0 +1,118 @@
+> # ARC-AGI-3 Docs
+
+> ## Docs
+
+- [Actions](https://docs.arcprize.org/actions.md): Input interface for ARC-AGI-3 games
+- [Create ARC-AGI-3 Environment](https://docs.arcprize.org/add_game.md): Building and adding a game to ARC-AGI-3 Environments
+- [Agents Quickstart](https://docs.arcprize.org/agents-quickstart.md): Build AI agents for ARC-AGI-3 environments
+- [API Keys](https://docs.arcprize.org/api-keys.md): How to get and use your ARC-AGI-3 API key
+- [Execute complex action (requires x,y)](https://docs.arcprize.org/api-reference/commands/execute-complex-action-requires-xy.md): Issues **ACTION 6**—a two-parameter command that supplies explicit X/Y coordinates—to an active game session.  Common use-cases include “click/tap at (x,y)”, “place a tile”, or “shoot a projectile,” depending on the game's mechanics.
+- [Execute simple action 1](https://docs.arcprize.org/api-reference/commands/execute-simple-action-1.md): Issues **ACTION 1** to the specified game session.   This is a single-parameter command (no X/Y coordinates): the exact in-game effect depends on the title—for example, it might represent “move up” or “select option A”.
+- [Execute simple action 2](https://docs.arcprize.org/api-reference/commands/execute-simple-action-2.md): Issues **ACTION 2** to the specified game session.   This is a single-parameter command (no X/Y coordinates): the exact in-game effect depends on the title—for example, it might represent “move down" or “select option B”.
+- [Execute simple action 3](https://docs.arcprize.org/api-reference/commands/execute-simple-action-3.md): Issues **ACTION 3** to the specified game session.   This is a single-parameter command (no X/Y coordinates): the exact in-game effect depends on the title—for example, it might represent “move left” or “select option C”.
+- [Execute simple action 4](https://docs.arcprize.org/api-reference/commands/execute-simple-action-4.md): Issues **ACTION 4** to the specified game session.   This is a single-parameter command (no X/Y coordinates): the exact in-game effect depends on the title—for example, it might represent “move right" or “select option D”.
+- [Execute simple action 5](https://docs.arcprize.org/api-reference/commands/execute-simple-action-5.md): Issues **ACTION 5** to the specified game session.   This is a single-parameter command (no X/Y coordinates): the exact in-game effect depends on the title—for example, it might represent “jump”, "rotate", "fire" or “select option E”.
+- [Execute simple action 7](https://docs.arcprize.org/api-reference/commands/execute-simple-action-7.md): Issues **ACTION 7** to the specified game session.   This is a single-parameter command (no X/Y coordinates):  ACTION7 will always be an undo action for games that support it.
+- [Start or reset game instance](https://docs.arcprize.org/api-reference/commands/start-or-reset-game-instance.md): Creates a new game session **or** resets an existing one, depending on the presence of `guid` in the request body:
+- [List available games](https://docs.arcprize.org/api-reference/games/list-available-games.md): Retrieves metadata for every game currently exposed by the ARC-AGI-3 platform.   Use this discovery endpoint to obtain `game_id` values before opening a scorecard or issuing commands. Results are returned as a flat array ordered alphabetically by `title`.
+- [Close scorecard](https://docs.arcprize.org/api-reference/scorecards/close-scorecard.md): Finalises a previously opened scorecard, locking its data and returning the aggregate results.   After a scorecard is closed, additional RESET or ACTION commands using its `card_id` are rejected.   You must supply the `card_id` obtained from **/scorecard/open**.
+- [Open scorecard](https://docs.arcprize.org/api-reference/scorecards/open-scorecard.md): Creates a new scorecard to aggregate statistics across one or more plays. The server returns a `card_id`, which must be included in all subsequent RESET commands and in the final **/scorecard/close** call. You may attach optional metadata (URL, tags, opaque JSON) that will be echoed back in summary…
+- [Retrieve scorecard](https://docs.arcprize.org/api-reference/scorecards/retrieve-scorecard.md): Returns the current (or final) statistics for the specified scorecard.   This works for both open and already-closed scorecards, making it useful for polling progress or fetching archived results.
+- [Retrieve scorecard (one game)](https://docs.arcprize.org/api-reference/scorecards/retrieve-scorecard-one-game.md): Returns the scorecard statistics **limited to a single environment**. Only the entry matching `game_id` is present in `environments`; all top-level counters are recomputed for that environment alone.
+- [Learn more about ARC-AGI-3](https://docs.arcprize.org/arc-agi-3.md): Learn more about the ARC Prize and ARC-AGI-3
+- [Available Games](https://docs.arcprize.org/available-games.md): List of ARC-AGI-3 games and how to discover them
+- [Benchmarking Tooling (BETA)](https://docs.arcprize.org/benchmarking-agent.md): Run repeatable agent evaluations.
+- [ARC-AGI Toolkit Changelog](https://docs.arcprize.org/changelog.md): Updates and announcements
+- [Contributing](https://docs.arcprize.org/contributing.md): Help build and maintain ARC-AGI-3 Agents.
+- [Create Your Own Agent](https://docs.arcprize.org/create-agent.md): Build a custom agent for ARC-AGI-3 games
+- [Edit Game](https://docs.arcprize.org/edit_games.md): A guide to modifying games in ARC-AGI-3 Environments
+- [Feature Requests & Bugs](https://docs.arcprize.org/feature-requests.md): Report issues and request features
+- [Full Play Test](https://docs.arcprize.org/full-play-test.md): What happens under the hood when running an ARC-AGI-3 game
+- [Game Schema](https://docs.arcprize.org/game-schema.md): Structure and format of ARC-AGI-3 game environments
+- [ARC-AGI-3 Quickstart](https://docs.arcprize.org/index.md): ARC-AGI-3 is an Interactive Reasoning Benchmark designed to measure an AI Agent's ability to generalize in novel, unseen environments.
+- [LLM Agents](https://docs.arcprize.org/llm_agents.md): Language model agents for ARC-AGI-3.
+- [Local vs Online](https://docs.arcprize.org/local-vs-online.md): Playing games locally with the engine vs online via the API
+- [ARC-AGI-3 Scoring Methodology](https://docs.arcprize.org/methodology.md): How ARC-AGI-3 scoring works
+- [AgentOps Template](https://docs.arcprize.org/partner_templates/agentops.md): AgentOps Template
+- [Anthropic Template](https://docs.arcprize.org/partner_templates/anthropic.md): Anthropic Template
+- [HuggingFace Template](https://docs.arcprize.org/partner_templates/huggingface.md): HuggingFace Template
+- [LangChain Template](https://docs.arcprize.org/partner_templates/langchain.md): LangChain Template
+- [Rate Limits](https://docs.arcprize.org/rate_limits.md): Limiting RPM for your agents
+- [Recordings & Replays](https://docs.arcprize.org/recordings.md): Viewing your agent's gameplay
+- [Overview](https://docs.arcprize.org/rest_overview.md): ARG AGI 3 Rest API Overview
+- [Scorecards](https://docs.arcprize.org/scorecards.md): Keeping track of agent performance
+- [Swarms](https://docs.arcprize.org/swarms.md): Orchestrate agents across multiple games.
+- [Arcade](https://docs.arcprize.org/toolkit/arc_agi.md): ARC-AGI 3 Client for Interactive Environments
+- [Close Scorecard](https://docs.arcprize.org/toolkit/close-scorecard.md): How to close and finalize a scorecard using the ARC-AGI Toolkit
+- [Competition Mode](https://docs.arcprize.org/toolkit/competition_mode.md): Running in Competition Mode
+- [Create Scorecard](https://docs.arcprize.org/toolkit/create-scorecard.md): How to create a custom scorecard using the ARC-AGI Toolkit
+- [EnvironmentWrapper](https://docs.arcprize.org/toolkit/environment_wrapper.md): Generic Python Interface for Interacting with ARC-AGI 3 Environments
+- [Get Scorecard](https://docs.arcprize.org/toolkit/get-scorecard.md): How to retrieve scorecard results using the ARC-AGI Toolkit
+- [List Available Actions](https://docs.arcprize.org/toolkit/list-actions.md): How to retrieve available actions for a game using the ARC-AGI Toolkit
+- [List Games](https://docs.arcprize.org/toolkit/list-games.md): How to list available games using the ARC-AGI Toolkit
+- [Listen And Serve](https://docs.arcprize.org/toolkit/listen_and_serve.md): Running the REST Endpoints to interact with Environments.
+- [Sample ARC-AGI Toolkit Agent](https://docs.arcprize.org/toolkit/minimal.md): An example agent that interacts with ARC-AGI-3 locally
+- [ARC-AGI Toolkit Quickstart](https://docs.arcprize.org/toolkit/overview.md): Getting started with the ARC-AGI Toolkit
+- [Render Games](https://docs.arcprize.org/toolkit/render-games.md): How to render ARC-AGI-3 games
+- [Submit Action](https://docs.arcprize.org/toolkit/submit-action.md): How to submit actions and include reasoning logs using the ARC-AGI Toolkit
+- [Vocabulary](https://docs.arcprize.org/vocabulary.md): Key terms used in ARC-AGI-3 documentation
+
+> ## OpenAPI Specs
+
+- [arc3v1](https://docs.arcprize.org/arc3v1.yaml)
+- [openapi](https://docs.arcprize.org/api-reference/openapi.json)
+
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.arcprize.org/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# API Keys
+
+> How to get and use your ARC-AGI-3 API key
+
+## Why Get an API Key?
+
+Registering for an API key allows you to:
+
+* **Track your progress** across games and sessions
+* **Access the full list of games** when launch goes out
+
+## How to Get Your API Key
+
+1. Go to [arcprize.org/platform](https://arcprize.org/platform)
+
+2. Register by logging in with either **Google** or **GitHub**
+
+3. Click on your **user profile** in the top right corner
+
+4. In your user profile, find the **API Keys** section
+
+5. Create a new key. This is your `ARC_AGI_API` key
+
+Once you have your key, set it in your enviornment or `.env` and you'll have access to the entire set of public games once available on the platform.
+
+## Using Your API Key
+
+Set your API key as an environment variable:
+
+```bash theme={null}
+export ARC_API_KEY="your-api-key-here"
+```
+
+Or add it to a `.env` file in your project:
+
+```bash theme={null}
+echo 'ARC_API_KEY=your-api-key-here' > .env
+```
+
+The toolkit will automatically load your key from the environment when you create an `Arcade` instance:
+
+```python theme={null}
+import arc_agi
+
+# Automatically uses ARC_API_KEY from environment
+arc = arc_agi.Arcade()
+
+# Or pass the API key explicitly
+arc = arc_agi.Arcade(arc_api_key="your-api-key-here")
+```

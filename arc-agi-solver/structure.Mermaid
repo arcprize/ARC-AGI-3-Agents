@@ -1,0 +1,44 @@
+graph TD
+
+%% =========================
+%% ARC-AGI SWARM SYSTEM
+%% =========================
+
+A[ARC Task Input] --> B[Loader / Parser]
+
+B --> C[Orchestrator]
+
+C --> D[Swarm Manager]
+
+%% Swarm branches
+D --> E1[Heuristic Agent]
+D --> E2[Search Agent]
+D --> E3[LLM Hypothesis Agent]
+D --> E4[Program Synthesis Agent]
+
+%% Memory system
+C --> M[Memory Bank]
+M --> E3
+M --> E2
+
+%% Candidate generation
+E1 --> F[Candidate Solutions]
+E2 --> F
+E3 --> F
+E4 --> F
+
+%% Voting system
+F --> V[Voting / Scoring Engine]
+
+V --> G[Best Candidate]
+
+%% Output
+G --> O[Final ARC Solution]
+
+%% Feedback loop
+G --> M
+G --> C
+
+%% Optional reinforcement loop
+V --> R[Evaluation Metrics]
+R --> C

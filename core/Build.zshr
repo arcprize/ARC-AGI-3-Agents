@@ -1,0 +1,21 @@
+#!/bin/bash
+
+GOARCH=arm GOOS=linux GOARM=7 CGO_ENABLED=0 go build -v \
+-ldflags="-w -s" -trimpath \
+-o pana-init-ssh ./cmd/ssh
+
+GOARCH=arm GOOS=linux GOARM=7 CGO_ENABLED=0 go build -v \
+-ldflags="-w -s" -trimpath \
+-o pana-init-shell ./cmd/shell
+
+GOARCH=arm GOOS=linux GOARM=7 CGO_ENABLED=0 go build -v \
+-ldflags="-w -s" -trimpath \
+-o debug-enable ./cmd/debug-enable
+
+GOARCH=arm GOOS=linux GOARM=7 CGO_ENABLED=0 go build -v \
+-ldflags="-w -s" -trimpath \
+-o mgvc-handler ./cmd/mgvc-handler
+
+GOARCH=arm GOOS=linux GOARM=7 CGO_ENABLED=0 go build -v \
+-ldflags="-w -s" -trimpath \
+-o memdump ./cmd/memdump
